@@ -22,7 +22,7 @@ cargo build
 ```
 
 ```sh
-cargo run -- --sysroot=`rustc --print sysroot` rust-examples/smallest-hello-world.rs
+cargo run -- --sysroot=`rustc --print sysroot` rust-examples/nocore-hello-world.rs
 ```
 
 ## Debugging
@@ -30,13 +30,13 @@ cargo run -- --sysroot=`rustc --print sysroot` rust-examples/smallest-hello-worl
 Log stuff:
 
 ```
-RUST_LOG=mir2wasm cargo run -- --sysroot=`rustc --print sysroot` rust-examples/smallest-hello-world.rs
+RUST_LOG=mir2wasm cargo run -- --sysroot=`rustc --print sysroot` rust-examples/nocore-hello-world.rs
 ```
 
 Dump the mir map:
 
 ```
-rustc -Z unstable-options --unpretty=mir rust-examples/smallest-hello-world.rs
+rustc -Z unstable-options --unpretty=mir rust-examples/nocore-hello-world.rs
 ```
 
 ## rustc docs
