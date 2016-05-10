@@ -6,6 +6,12 @@ pub type BinaryenOp = u32;
 
 pub type BinaryenModuleRef = *mut c_void;
 pub type BinaryenFunctionTypeRef = *mut c_void;
+pub type BinaryenExpressionRef = *mut c_void;
+
+pub struct BinaryenLiteral {
+    type_: i32,
+    contents: i64,
+}
 
 extern {
     // Basic types
@@ -14,6 +20,15 @@ extern {
     pub fn BinaryenInt64() -> BinaryenType;
     pub fn BinaryenFloat32() -> BinaryenType;
     pub fn BinaryenFloat64() -> BinaryenType;
+
+    // Literals
+
+    pub fn BinaryenLiteralInt32(x: i32) -> BinaryenLiteral;
+    pub fn BinaryenLiteralInt64(x: i64) -> BinaryenLiteral;
+    pub fn BinaryenLiteralFloat32(x: f32) -> BinaryenLiteral;
+    pub fn BinaryenLiteralFloat64(x: f64) -> BinaryenLiteral;
+    pub fn BinaryenLiteralFloat32Bits(x: i32) -> BinaryenLiteral;
+    pub fn BinaryenLiteralFloat64Bits(x: i64) -> BinaryenLiteral;
 
     // Modules
     pub fn BinaryenModuleCreate() -> BinaryenModuleRef;
@@ -98,4 +113,28 @@ extern {
     pub fn BinaryenCurrentMemory() -> BinaryenOp;
     pub fn BinaryenGrowMemory() -> BinaryenOp;
     pub fn BinaryenHasFeature() -> BinaryenOp;
+
+    // Expressions
+
+    pub fn BinaryenBlock(module: BinaryenModuleRef, name: *const c_char, children: *mut BinaryenExpressionRef, numChildren: BinaryenIndex) -> BinaryenExpressionRef;
+    pub fn BinaryenIf(module: BinaryenModuleRef, condition: BinaryenExpressionRef, ifTrue: BinaryenExpressionRef, ifFalse: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenLoop(module: BinaryenModuleRef, out: *const c_char, in_: *const c_char, body: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenBreak(module: BinaryenModuleRef, name: *const c_char, condition: BinaryenExpressionRef, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenSwitch(module: BinaryenModuleRef, names: *const *const c_char, numNames: BinaryenIndex, defaultName: *const c_char, condition: BinaryenExpressionRef, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenCall(module: BinaryenModuleRef, target: *const c_char, operands: *const BinaryenExpressionRef, numOperands: BinaryenIndex, returnType: BinaryenType) -> BinaryenExpressionRef;
+    pub fn BinaryenCallImport(module: BinaryenModuleRef, target: *const c_char, operands: *const BinaryenExpressionRef, numOperands: BinaryenIndex, returnType: BinaryenType) -> BinaryenExpressionRef;
+    pub fn BinaryenCallIndirect(module: BinaryenModuleRef, target: BinaryenExpressionRef, operands: *const BinaryenExpressionRef, numOperands: BinaryenIndex, type_: BinaryenFunctionTypeRef) -> BinaryenExpressionRef;
+    pub fn BinaryenGetLocal(module: BinaryenModuleRef, index: BinaryenIndex, type_: BinaryenType) -> BinaryenExpressionRef;
+    pub fn BinaryenSetLocal(module: BinaryenModuleRef, index: BinaryenIndex, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenLoad(module: BinaryenModuleRef, bytes: u32, signed_: u8, offset: u32, align: u32, type_: BinaryenType, ptr: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenStore(module: BinaryenModuleRef, bytes: u32, offset: u32, align: u32, ptr: BinaryenExpressionRef, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenConst(module: BinaryenModuleRef, value: BinaryenLiteral) -> BinaryenExpressionRef;
+    pub fn BinaryenUnary(module: BinaryenModuleRef, op: BinaryenOp, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenBinary(module: BinaryenModuleRef, op: BinaryenOp, left: BinaryenExpressionRef, right: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenSelect(module: BinaryenModuleRef, condition: BinaryenExpressionRef, ifTrue: BinaryenExpressionRef, ifFalse: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenReturn(module: BinaryenModuleRef, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenHost(module: BinaryenModuleRef, op: BinaryenOp, name: *const c_char, operands: *const BinaryenExpressionRef, numOperands: BinaryenIndex) -> BinaryenExpressionRef;
+    pub fn BinaryenNop(module: BinaryenModuleRef) -> BinaryenExpressionRef;
+    pub fn BinaryenUnreachable(module: BinaryenModuleRef) -> BinaryenExpressionRef;
+
 }
