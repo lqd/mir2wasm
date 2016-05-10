@@ -1,14 +1,18 @@
 [package]
-authors = ["Scott Olson <scott@solson.me>"]
-description = "An experimental interpreter for Rust MIR."
-license = "ISC"
-name = "miri"
-repository = "https://github.com/solson/miri"
+authors = [
+    "Scott Olson <scott@solson.me>",
+    "Brian Anderson <banderson@mozilla.com>",
+    "Alon Zakai <azakai@mozilla.com>"
+]
+description = "An experimental compiler from Rust to WebAssembly."
+license = "MIT/Apache-2.0"
+name = "mir2wasm"
+repository = "https://github.com/brson/mir2wasm"
 version = "0.1.0"
 
 [[bin]]
 doc = false
-name = "miri"
+name = "mir2wasm"
 
 [dependencies]
 byteorder = "0.4.2"

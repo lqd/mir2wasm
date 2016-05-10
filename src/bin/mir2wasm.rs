@@ -2,11 +2,11 @@
 #![allow(unused_attributes)]
 
 extern crate getopts;
-extern crate miri;
+extern crate mir2wasm;
 extern crate rustc;
 extern crate rustc_driver;
 
-use miri::interpreter;
+use mir2wasm::interpreter;
 use rustc::session::Session;
 use rustc_driver::{driver, CompilerCalls};
 
