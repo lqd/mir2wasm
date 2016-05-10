@@ -2,6 +2,8 @@
 
 An experimental compiler from [Rust] to [WebAssembly], based on rustc + Rust [MIR].
 
+**This doesn't do anything useful yet.**
+
 ## Download Rust nightly
 
 I currently recommend that you install [rustup] and then use it to
@@ -20,8 +22,26 @@ cargo build
 ```
 
 ```sh
-cargo run -- --sysroot=`rustc --print sysroot` hello.rs
+cargo run -- --sysroot=`rustc --print sysroot` rust-examples/smallest-hello-world.rs
 ```
+
+## Debugging
+
+Log stuff:
+
+```
+RUST_LOG=mir2wasm cargo run -- --sysroot=`rustc --print sysroot` rust-examples/smallest-hello-world.rs
+```
+
+Dump the mir map:
+
+```
+rustc -Z unstable-options --unpretty=mir rust-examples/smallest-hello-world.rs
+```
+
+## rustc docs
+
+https://manishearth.github.io/rust-internals-docs/rustc/index.html
 
 ## License
 

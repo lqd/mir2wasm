@@ -8,15 +8,16 @@
     rustc_private,
 )]
 
-// From rustc.
 #[macro_use] extern crate rustc;
 extern crate rustc_mir;
 extern crate syntax;
 
-// From crates.io.
-extern crate byteorder;
+#[macro_use]
+extern crate error_chain;
+#[macro_use]
+extern crate log;
+extern crate env_logger;
 
-mod error;
-pub mod interpreter;
-mod memory;
-mod primval;
+pub mod error;
+pub mod trans;
+//mod binaryen;

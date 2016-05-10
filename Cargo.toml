@@ -15,7 +15,9 @@ doc = false
 name = "mir2wasm"
 
 [dependencies]
-byteorder = "0.4.2"
+error-chain = "0.1.9"
+log = "0.3.6"
+env_logger = "0.3.3"
 
 [dev-dependencies]
 compiletest_rs = "0.1.1"

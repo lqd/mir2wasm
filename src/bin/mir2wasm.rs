@@ -1,12 +1,13 @@
 #![feature(rustc_private, custom_attribute)]
 #![allow(unused_attributes)]
 
+extern crate env_logger;
 extern crate getopts;
 extern crate mir2wasm;
 extern crate rustc;
 extern crate rustc_driver;
 
-use mir2wasm::interpreter;
+use mir2wasm::trans;
 use rustc::session::Session;
 use rustc_driver::{driver, CompilerCalls};
 
@@ -22,7 +23,7 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
 
         control.after_analysis.callback = Box::new(|state| {
             state.session.abort_if_errors();
-            interpreter::interpret_start_points(state.tcx.unwrap(), state.mir_map.unwrap());
+            trans::translate_crate(state.tcx.unwrap(), state.mir_map.unwrap());
         });
 
         control
@@ -31,6 +32,8 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
 
 #[miri_run]
 fn main() {
+    env_logger::init().unwrap();
+
     let args: Vec<String> = std::env::args().collect();
     rustc_driver::run_compiler(&args, &mut MiriCompilerCalls);
 }
