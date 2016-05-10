@@ -2,6 +2,7 @@
 name = "mir2wasm"
 version = "0.1.0"
 dependencies = [
+ "cmake 0.1.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "compiletest_rs 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "error-chain 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -42,6 +43,14 @@ dependencies = [
 name = "cfg-if"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "cmake"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "gcc 0.3.28 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "compiletest_rs"
