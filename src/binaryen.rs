@@ -1,7 +1,7 @@
+pub type BinaryenIndex = u32;
+pub type BinaryenType = u32;
+
 #[link(name = "binaryen")]
 extern {
-    type BinaryenIndex = u32;
-    type BinaryenType = u32;
-
-    fn BinaryenNone() -> BinaryenType;
+    pub fn BinaryenNone() -> BinaryenType;
 }
