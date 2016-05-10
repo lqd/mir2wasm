@@ -1,6 +1,11 @@
+use libc::{c_void, c_char};
+
 pub type BinaryenIndex = u32;
 pub type BinaryenType = u32;
 pub type BinaryenOp = u32;
+
+pub type BinaryenModuleRef = *mut c_void;
+pub type BinaryenFunctionTypeRef = *mut c_void;
 
 extern {
     // Basic types
@@ -10,7 +15,13 @@ extern {
     pub fn BinaryenFloat32() -> BinaryenType;
     pub fn BinaryenFloat64() -> BinaryenType;
 
-    // ...
+    // Modules
+    pub fn BinaryenModuleCreate() -> BinaryenModuleRef;
+    pub fn BinaryenModuleDispose(module: BinaryenModuleRef);
+
+    // Function types
+
+    BinaryenAddFunctionType(module: BinaryenModuleRef, name: *const c_char, result: BinaryenType, paramTypes: *mut BinaryenType, numParams: BinaryenIndex) -> BinaryenFunctionTypeRef;
 
     // Ops
 
