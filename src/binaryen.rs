@@ -21,7 +21,7 @@ extern {
 
     // Function types
 
-    BinaryenAddFunctionType(module: BinaryenModuleRef, name: *const c_char, result: BinaryenType, paramTypes: *mut BinaryenType, numParams: BinaryenIndex) -> BinaryenFunctionTypeRef;
+    pub fn BinaryenAddFunctionType(module: BinaryenModuleRef, name: *const c_char, result: BinaryenType, paramTypes: *mut BinaryenType, numParams: BinaryenIndex) -> BinaryenFunctionTypeRef;
 
     // Ops
 
