@@ -33,11 +33,22 @@ pub fn translate_crate<'tcx>(tcx: &TyCtxt<'tcx>,
             match item.node {
                 hir::ItemFn(ref decl, _, _, _, _, _) => {
                     unsafe {
-                        let sig = "ii"; // TODO: compute from function
+                        let mut return_type : BinaryenType;
+
+                        let sig = match decl.output {
+                            hir::FunctionRetTy::Return(ref x) => {
+                                return_type = BinaryenInt32();
+                                "i"
+                            },
+                            _ => {
+                                return_type = BinaryenNone();
+                                "v"
+                            }
+                        };
 
                         if !fun_types.contains_key(sig) {
                             let param = BinaryenInt32();
-                            let ty = BinaryenAddFunctionType(module, CString::new(sig).unwrap().as_ptr(), BinaryenInt32(), &param, 1);
+                            let ty = BinaryenAddFunctionType(module, CString::new(sig).unwrap().as_ptr(), return_type, &param, 1);
                             fun_types.insert(sig, ty);
                         }
 
