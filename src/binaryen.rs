@@ -42,7 +42,7 @@ extern {
 
     // Function types
 
-    pub fn BinaryenAddFunctionType(module: BinaryenModuleRef, name: *const c_char, result: BinaryenType, paramTypes: *mut BinaryenType, numParams: BinaryenIndex) -> BinaryenFunctionTypeRef;
+    pub fn BinaryenAddFunctionType(module: BinaryenModuleRef, name: *const c_char, result: BinaryenType, paramTypes: *const BinaryenType, numParams: BinaryenIndex) -> BinaryenFunctionTypeRef;
 
     // Ops
 
@@ -122,7 +122,7 @@ extern {
 
     // Expressions
 
-    pub fn BinaryenBlock(module: BinaryenModuleRef, name: *const c_char, children: *mut BinaryenExpressionRef, numChildren: BinaryenIndex) -> BinaryenExpressionRef;
+    pub fn BinaryenBlock(module: BinaryenModuleRef, name: *const c_char, children: *const BinaryenExpressionRef, numChildren: BinaryenIndex) -> BinaryenExpressionRef;
     pub fn BinaryenIf(module: BinaryenModuleRef, condition: BinaryenExpressionRef, ifTrue: BinaryenExpressionRef, ifFalse: BinaryenExpressionRef) -> BinaryenExpressionRef;
     pub fn BinaryenLoop(module: BinaryenModuleRef, out: *const c_char, in_: *const c_char, body: BinaryenExpressionRef) -> BinaryenExpressionRef;
     pub fn BinaryenBreak(module: BinaryenModuleRef, name: *const c_char, condition: BinaryenExpressionRef, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
