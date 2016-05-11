@@ -1,4 +1,4 @@
-use libc::{c_void, c_char};
+use libc::{c_void, c_char, size_t};
 
 pub type BinaryenIndex = u32;
 pub type BinaryenType = u32;
@@ -7,11 +7,17 @@ pub type BinaryenOp = u32;
 pub type BinaryenModuleRef = *mut c_void;
 pub type BinaryenFunctionTypeRef = *mut c_void;
 pub type BinaryenExpressionRef = *mut c_void;
+pub type BinaryenFunctionRef = *mut c_void;
+pub type BinaryenImportRef = *mut c_void;
+pub type BinaryenExportRef = *mut c_void;
 
 pub struct BinaryenLiteral {
     type_: i32,
     contents: i64,
 }
+
+pub type RelooperRef  = *mut c_void;
+pub type RelooperBlockRef = *mut c_void;
 
 extern {
     // Basic types
@@ -136,5 +142,51 @@ extern {
     pub fn BinaryenHost(module: BinaryenModuleRef, op: BinaryenOp, name: *const c_char, operands: *const BinaryenExpressionRef, numOperands: BinaryenIndex) -> BinaryenExpressionRef;
     pub fn BinaryenNop(module: BinaryenModuleRef) -> BinaryenExpressionRef;
     pub fn BinaryenUnreachable(module: BinaryenModuleRef) -> BinaryenExpressionRef;
+
+    // Functions
+
+    pub fn BinaryenAddFunction(module: BinaryenModuleRef, name: *const c_char, type_: BinaryenFunctionTypeRef, localTypes: *const BinaryenType, numLocalTypes: BinaryenIndex, body: BinaryenExpressionRef) -> BinaryenFunctionRef;
+
+    // Imports
+
+    pub fn BinaryenAddImport(module: BinaryenModuleRef, internalName: *const c_char, externalModuleName: *const c_char, externalBaseName: *const char, type_: BinaryenFunctionTypeRef) -> BinaryenImportRef;
+
+    // Exports
+
+    pub fn BinaryenAddExport(module: BinaryenModuleRef, internalName: *const c_char, externalName: *const c_char) -> BinaryenExportRef;
+
+    // Function table. One per module
+
+    pub fn BinaryenSetFunctionTable(module: BinaryenModuleRef, functions: *const BinaryenFunctionRef, numFunctions: BinaryenIndex);
+
+    // Memory
+
+    pub fn BinaryenSetMemory(module: BinaryenModuleRef, initial: BinaryenIndex, maximum: BinaryenIndex, exportName: *const c_char, segments: *const *const c_char, segmentOffsets: *const BinaryenIndex, segmentSizes: *const BinaryenIndex, numSegments: BinaryenIndex);
+
+    // Start function
+
+    pub fn BinaryenSetStart(module: BinaryenModuleRef, start: BinaryenFunctionRef);
+
+    // Module Operations
+
+    pub fn BinaryenModulePrint(module: BinaryenModuleRef);
+
+    pub fn BinaryenModuleValidate(module: BinaryenModuleRef) -> i32;
+
+    pub fn BinaryenModuleOptimize(module: BinaryenModuleRef);
+
+    pub fn BinaryenModuleWrite(module: BinaryenModuleRef, output: *const c_char, outputSize: size_t) -> size_t;
+
+    pub fn BinaryenModuleRead(input: *const c_char, inputSize: size_t) -> BinaryenModuleRef;
+
+    // CFG / Relooper
+
+    pub fn RelooperCreate() -> RelooperRef;
+
+    pub fn RelooperAddBlock(relooper: RelooperRef, code: BinaryenExpressionRef) -> RelooperBlockRef;
+
+    pub fn RelooperAddBranch(from: RelooperBlockRef, to: RelooperBlockRef, condition: BinaryenExpressionRef, code: BinaryenExpressionRef);
+
+    pub fn RelooperRenderAndDispose(relooper: RelooperRef, entry: RelooperBlockRef, labelHelper: BinaryenIndex, module: BinaryenModuleRef) -> BinaryenExpressionRef;
 
 }
