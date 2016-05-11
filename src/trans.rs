@@ -12,43 +12,28 @@ use binaryen::*;
 
 pub fn translate_crate<'tcx>(tcx: &TyCtxt<'tcx>,
                              mir_map: &MirMap<'tcx>) -> Result<()> {
-    let _ignore = tcx.dep_graph.in_ignore();
 
-    let ref mut v = HirVisitor { mir_map: mir_map };
+    for (&id, mir) in &mir_map.map {
+        for attr in tcx.map.attrs(id) {
+            let item = tcx.map.expect_item(id);
+            println!("Processing function: {}", item.name);
 
-    tcx.map.krate().visit_all_items(v);
+            unsafe {
+                let module = BinaryenModuleCreate();
+
+                let param = BinaryenInt32();
+                let ii = BinaryenAddFunctionType(module, CString::new("iii").unwrap().as_ptr(), BinaryenInt32(), &param, 1);
+
+                let add = BinaryenBinary(module, BinaryenAdd(), BinaryenGetLocal(module, 0, BinaryenInt32()), BinaryenGetLocal(module, 0, BinaryenInt32()));
+
+                let adder = BinaryenAddFunction(module, CString::new(item.name.as_str().as_bytes()).unwrap().as_ptr(), ii, ptr::null(), 0, add);
+
+                BinaryenModulePrint(module);
+            }
+
+        }
+    }
 
     Ok(())
 }
 
-struct HirVisitor<'a, 'tcx: 'a> {
-    mir_map: &'a MirMap<'tcx>
-}
-
-impl<'v, 'a: 'tcx, 'tcx> Visitor<'v> for HirVisitor<'a, 'tcx> {
-    fn visit_fn(&mut self, fk: FnKind<'v>, fd: &'v FnDecl,
-                b: &'v Block, s: Span, id: NodeId) {
-        debug!("visiting fn {:?}", fd);
-
-        //vvvvv
-        unsafe {
-            let module = BinaryenModuleCreate();
-
-            let param = BinaryenInt32();
-            let ii = BinaryenAddFunctionType(module, CString::new("iii").unwrap().as_ptr(), BinaryenInt32(), &param, 1);
-
-            let add = BinaryenBinary(module, BinaryenAdd(), BinaryenGetLocal(module, 0, BinaryenInt32()), BinaryenGetLocal(module, 0, BinaryenInt32()));
-
-            let adder = BinaryenAddFunction(module, CString::new("adder").unwrap().as_ptr(), ii, ptr::null(), 0, add);
-
-            BinaryenModulePrint(module);
-        }
-        //^^^^^
-
-        let mir = self.mir_map.map.get(&id);
-
-        //debug!("fn mir: {:?}", mir);
-
-        intravisit::walk_fn(self, fk, fd, b, s)
-    }
-}
