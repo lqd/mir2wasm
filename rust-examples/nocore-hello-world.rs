@@ -30,7 +30,3 @@ fn main(_: isize, _: *const *const u8) -> isize {
     }
     return 0;
 }
-
-#[cfg(target_os = "android")]
-#[link(name="gcc")]
-extern { }
