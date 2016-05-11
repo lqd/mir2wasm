@@ -2,6 +2,7 @@ use error::*;
 use rustc_mir;
 use rustc::mir::mir_map::MirMap;
 use rustc::ty::{self, TyCtxt};
+use rustc::hir;
 use rustc::hir::intravisit::{self, Visitor, FnKind};
 use rustc::hir::{FnDecl, Block};
 use syntax::ast::NodeId;
@@ -27,21 +28,26 @@ pub fn translate_crate<'tcx>(tcx: &TyCtxt<'tcx>,
             let item = tcx.map.expect_item(id);
 
             println!("Processing function ({}): {}", id, item.name);
+            //println!("{}", item);
 
-            unsafe {
-                let sig = "ii"; // TODO: compute from function
+            match item.node {
+                hir::ItemFn(ref decl, _, _, _, _, _) => {
+                    unsafe {
+                        let sig = "ii"; // TODO: compute from function
 
-                if !fun_types.contains_key(sig) {
-                    let param = BinaryenInt32();
-                    let ty = BinaryenAddFunctionType(module, CString::new(sig).unwrap().as_ptr(), BinaryenInt32(), &param, 1);
-                    fun_types.insert(sig, ty);
+                        if !fun_types.contains_key(sig) {
+                            let param = BinaryenInt32();
+                            let ty = BinaryenAddFunctionType(module, CString::new(sig).unwrap().as_ptr(), BinaryenInt32(), &param, 1);
+                            fun_types.insert(sig, ty);
+                        }
+
+                        let add = BinaryenBinary(module, BinaryenAdd(), BinaryenGetLocal(module, 0, BinaryenInt32()), BinaryenGetLocal(module, 0, BinaryenInt32()));
+
+                        BinaryenAddFunction(module, CString::new(item.name.as_str().as_bytes()).unwrap().as_ptr(), *fun_types.get(sig).unwrap(), ptr::null(), 0, add);
+                    }
                 }
-
-                let add = BinaryenBinary(module, BinaryenAdd(), BinaryenGetLocal(module, 0, BinaryenInt32()), BinaryenGetLocal(module, 0, BinaryenInt32()));
-
-                BinaryenAddFunction(module, CString::new(item.name.as_str().as_bytes()).unwrap().as_ptr(), *fun_types.get(sig).unwrap(), ptr::null(), 0, add);
-            }
-
+                _ => panic!("wtf where's my function")
+            };
         }
     }
 
