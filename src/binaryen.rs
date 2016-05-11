@@ -16,6 +16,9 @@ pub struct BinaryenLiteral {
     contents: i64,
 }
 
+pub type RelooperRef  = *mut c_void;
+pub type RelooperBlockRef = *mut c_void;
+
 extern {
     // Basic types
     pub fn BinaryenNone() -> BinaryenType;
@@ -175,5 +178,15 @@ extern {
     pub fn BinaryenModuleWrite(module: BinaryenModuleRef, output: *const c_char, outputSize: size_t) -> size_t;
 
     pub fn BinaryenModuleRead(input: *const c_char, inputSize: size_t) -> BinaryenModuleRef;
+
+    // CFG / Relooper
+
+    pub fn RelooperCreate() -> RelooperRef;
+
+    pub fn RelooperAddBlock(relooper: RelooperRef, code: BinaryenExpressionRef) -> RelooperBlockRef;
+
+    pub fn RelooperAddBranch(from: RelooperBlockRef, to: RelooperBlockRef, condition: BinaryenExpressionRef, code: BinaryenExpressionRef);
+
+    pub fn RelooperRenderAndDispose(relooper: RelooperRef, entry: RelooperBlockRef, labelHelper: BinaryenIndex, module: BinaryenModuleRef) -> BinaryenExpressionRef;
 
 }
