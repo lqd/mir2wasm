@@ -152,7 +152,7 @@ extern {
 
     // Imports
 
-    pub fn BinaryenAddImport(module: BinaryenModuleRef, internalName: *const c_char, externalModuleName: *const c_char, externalBaseName: *const char, type_: BinaryenFunctionTypeRef) -> BinaryenImportRef;
+    pub fn BinaryenAddImport(module: BinaryenModuleRef, internalName: *const c_char, externalModuleName: *const c_char, externalBaseName: *const c_char, type_: BinaryenFunctionTypeRef) -> BinaryenImportRef;
 
     // Exports
 

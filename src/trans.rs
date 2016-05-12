@@ -1,7 +1,6 @@
 use error::*;
-use rustc_mir;
 use rustc::mir::mir_map::MirMap;
-use rustc::ty::{self, TyCtxt};
+use rustc::ty::TyCtxt;
 use rustc::hir;
 use rustc::hir::intravisit::{self, Visitor, FnKind};
 use rustc::hir::{FnDecl, Block};
@@ -19,7 +18,7 @@ pub fn translate_crate<'tcx>(tcx: &TyCtxt<'tcx>,
 
     let ref mut v = HirVisitor {
         tcx: tcx,
-        mir_map: mir_map,
+        _mir_map: mir_map,
         module: unsafe { BinaryenModuleCreate() },
         fun_types: HashMap::new(),
     };
@@ -36,7 +35,7 @@ pub fn translate_crate<'tcx>(tcx: &TyCtxt<'tcx>,
 
 struct HirVisitor<'v, 'tcx: 'v> {
     tcx: &'v TyCtxt<'tcx>,
-    mir_map: &'v MirMap<'tcx>,
+    _mir_map: &'v MirMap<'tcx>,
     module: BinaryenModuleRef,
     fun_types: HashMap<&'static str, BinaryenFunctionTypeRef>,
 }
@@ -50,10 +49,10 @@ impl<'v, 'tcx> Visitor<'v> for HirVisitor<'v, 'tcx> {
         println!("Processing function ({}): {}", id, item.name);
 
         unsafe {
-            let mut return_type : BinaryenType;
+            let return_type : BinaryenType;
 
             let sig = match fd.output {
-                hir::FunctionRetTy::Return(ref x) => {
+                hir::FunctionRetTy::Return(_) => {
                     return_type = BinaryenInt32();
                     "i"
                 },
