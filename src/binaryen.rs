@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use libc::{c_void, c_char, size_t};
 
 pub type BinaryenIndex = u32;
