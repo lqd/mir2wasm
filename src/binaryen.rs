@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use libc::{c_void, c_char, size_t};
 
 pub type BinaryenIndex = u32;
@@ -11,6 +13,7 @@ pub type BinaryenFunctionRef = *mut c_void;
 pub type BinaryenImportRef = *mut c_void;
 pub type BinaryenExportRef = *mut c_void;
 
+#[repr(C)]
 pub struct BinaryenLiteral {
     type_: i32,
     contents: i64,
@@ -149,7 +152,7 @@ extern {
 
     // Imports
 
-    pub fn BinaryenAddImport(module: BinaryenModuleRef, internalName: *const c_char, externalModuleName: *const c_char, externalBaseName: *const char, type_: BinaryenFunctionTypeRef) -> BinaryenImportRef;
+    pub fn BinaryenAddImport(module: BinaryenModuleRef, internalName: *const c_char, externalModuleName: *const c_char, externalBaseName: *const c_char, type_: BinaryenFunctionTypeRef) -> BinaryenImportRef;
 
     // Exports
 

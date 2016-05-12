@@ -1,9 +1,4 @@
 #![feature(
-    btree_range,
-    collections,
-    collections_bound,
-    core_intrinsics,
-    filling_drop,
     question_mark,
     rustc_private,
 )]
