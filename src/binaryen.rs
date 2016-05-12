@@ -13,6 +13,7 @@ pub type BinaryenFunctionRef = *mut c_void;
 pub type BinaryenImportRef = *mut c_void;
 pub type BinaryenExportRef = *mut c_void;
 
+#[repr(C)]
 pub struct BinaryenLiteral {
     type_: i32,
     contents: i64,
