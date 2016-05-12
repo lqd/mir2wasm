@@ -1,12 +1,12 @@
-# Miri
+# mir2wasm
 
 An experimental compiler from [Rust] to [WebAssembly], based on rustc + Rust [MIR].
 
 **This doesn't do anything useful yet.**
 
-## Download Rust nightly
+## Hacking notes
 
-I currently recommend that you install [rustup] and then use it to
+I recommend that you install [rustup] and then use it to
 install the current rustc nightly version:
 
 ```sh
@@ -14,8 +14,6 @@ git clone https://github.com/brson/mir2wasm.git
 cd mir2wasm
 rustup override set nightly
 ```
-
-## Build && run
 
 ```sh
 cargo build
@@ -25,23 +23,15 @@ cargo build
 cargo run -- --sysroot=`rustc --print sysroot` rust-examples/nocore-hello-world.rs
 ```
 
-## Debugging
-
-Log stuff:
-
 ```
 RUST_LOG=mir2wasm cargo run -- --sysroot=`rustc --print sysroot` rust-examples/nocore-hello-world.rs
 ```
-
-Dump the mir map:
 
 ```
 rustc -Z unstable-options --unpretty=mir rust-examples/nocore-hello-world.rs
 ```
 
-## rustc docs
-
-https://manishearth.github.io/rust-internals-docs/rustc/index.html
+[rustc docs](https://manishearth.github.io/rust-internals-docs/rustc/index.html).
 
 ## License
 
