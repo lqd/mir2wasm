@@ -45,16 +45,18 @@ impl<'v, 'tcx> Visitor<'v> for HirVisitor<'v, 'tcx> {
                 b: &'v Block, s: Span, id: NodeId) {
 
         let item = self.tcx.map.expect_item(id);
-        let mir = self.mir_map.map.get(&id);
+        let mir = &self.mir_map.map[&id];
 
         let did = self.tcx.map.local_def_id(id);
         let ty = self.tcx.lookup_item_type(did).ty;
         let sig = ty.fn_sig().skip_binder();
 
         let binaryen_args: Vec<_> = sig.inputs.iter().map(|t| rust_ty_to_binaryen(t)).collect();
+        let mut needs_ret_local = false;
         let binaryen_ret = match sig.output {
             ty::FnOutput::FnConverging(t) => {
                 if !t.is_nil() {
+                    needs_ret_local = true;
                     rust_ty_to_binaryen(t)
                 } else {
                     unsafe { BinaryenNone() }
@@ -84,21 +86,39 @@ impl<'v, 'tcx> Visitor<'v> for HirVisitor<'v, 'tcx> {
             }
         }
 
-        println!("Processing function ({}): {}", id, item.name);
+        let mut locals = Vec::new();
+
+        for mir_local in &mir.var_decls {
+            locals.push(rust_ty_to_binaryen(mir_local.ty));
+        }
+
+        for mir_local in &mir.temp_decls {
+            locals.push(rust_ty_to_binaryen(mir_local.ty));
+        }
+
+        if needs_ret_local {
+            locals.push(binaryen_ret);
+        }
 
         unsafe {
             let return_type : BinaryenType;
 
             if !self.fun_types.contains_key(sig) {
-                let name = self.tcx.node_path_str(id);
+                let name = sig.to_string();
+                let name = CString::new(name).expect("").as_ptr();
                 let ty = BinaryenAddFunctionType(self.module,
-                                                 CString::new(name).expect("").as_ptr(),
+                                                 name,
                                                  binaryen_ret,
                                                  binaryen_args.as_ptr(), binaryen_args.len() as _);
                 self.fun_types.insert(sig, ty);
             }
 
-            BinaryenAddFunction(self.module, CString::new(item.name.as_str().as_bytes()).unwrap().as_ptr(), *self.fun_types.get(sig).unwrap(), ptr::null(), 0, BinaryenNop(self.module));
+            let name = self.tcx.node_path_str(id);
+            let name = CString::new(name).expect("").as_ptr();
+            BinaryenAddFunction(self.module, name,
+                                *self.fun_types.get(sig).unwrap(),
+                                locals.as_ptr(), locals.len() as _,
+                                BinaryenNop(self.module));
         }
 
         intravisit::walk_fn(self, fk, fd, b, s)
