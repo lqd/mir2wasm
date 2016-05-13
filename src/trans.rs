@@ -1,5 +1,5 @@
 use error::*;
-use rustc::mir::repr::Mir;
+use rustc::mir::repr::{Mir, StatementKind, Lvalue, Rvalue};
 use rustc::mir::mir_map::MirMap;
 use rustc::ty::{self, TyCtxt, Ty, FnSig};
 use rustc::hir;
@@ -110,12 +110,37 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             locals.push(binaryen_ret);
         }
 
+        let relooper = unsafe { RelooperCreate() };
+
+        let mut relooper_blocks = Vec::new();
+
+        for bb in &self.mir.basic_blocks {
+            let mut binaryen_stmts = Vec::new();
+            for stmt in &bb.statements {
+                match stmt.kind {
+                    StatementKind::Assign(ref lval, ref rval) => {
+                        let (lval_i, _) = self.translate_lval(lval);
+                        let rval_expr = self.translate_rval(rval);
+                        let binaryen_stmt = unsafe { BinaryenSetLocal(self.module, lval_i, rval_expr) };
+                        binaryen_stmts.push(binaryen_stmt);
+                    }
+                }
+            }
+            unsafe {
+                let binaryen_expr = BinaryenBlock(self.module, ptr::null(),
+                                                  binaryen_stmts.as_ptr(),
+                                                  binaryen_stmts.len() as _);
+                let relooper_block = RelooperAddBlock(relooper, binaryen_expr);
+                relooper_blocks.push(relooper_block);
+            }
+        }
+
         unsafe {
             let return_type : BinaryenType;
 
             if !self.fun_types.contains_key(self.sig) {
                 let name = self.sig.to_string();
-                let name = CString::new(name).expect("").as_ptr();
+                let name = CString::new(name).expect("").into_raw(); // FIXME
                 let ty = BinaryenAddFunctionType(self.module,
                                                  name,
                                                  binaryen_ret,
@@ -124,17 +149,43 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             }
 
             let name = self.tcx.node_path_str(self.id);
-            let name = CString::new(name).expect("").as_ptr();
+            let name = CString::new(name).expect("").into_raw(); // FIXME
+            let body = RelooperRenderAndDispose(relooper,
+                                                relooper_blocks[0],
+                                                !0, // FIXME
+                                                self.module);
             BinaryenAddFunction(self.module, name,
                                 *self.fun_types.get(self.sig).unwrap(),
                                 locals.as_ptr(), locals.len() as _,
-                                BinaryenNop(self.module));
+                                body);
         }
+    }
+
+    fn translate_lval(&mut self, lvalue: &Lvalue) -> (u32, u32) {
+        let i = match *lvalue {
+            Lvalue::Arg(i) => i,
+            Lvalue::Var(i) => self.mir.arg_decls.len() as u32 + i,
+            Lvalue::Temp(i) => {
+                self.mir.arg_decls.len() as u32 +
+                    self.mir.var_decls.len() as u32 + i
+            }
+            Lvalue::ReturnPointer => {
+                self.mir.arg_decls.len() as u32 +
+                    self.mir.var_decls.len() as u32 +
+                    self.mir.temp_decls.len() as u32
+            }
+            _ => panic!()
+        };
+
+        (i, 0)
+    }
+
+    fn translate_rval(&mut self, rvalue: &Rvalue) -> BinaryenExpressionRef {
+        unsafe { BinaryenNop(self.module) }
     }
 }
 
 fn rust_ty_to_binaryen<'tcx>(t: Ty<'tcx>) -> BinaryenType {
-    println!("{:?}", t);
     // FIXME zero-sized-types
     match t.sty {
         ty::TyFloat(FloatTy::F32) => {
