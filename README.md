@@ -20,15 +20,15 @@ cargo build
 ```
 
 ```sh
-cargo run -- --sysroot=`rustc --print sysroot` rust-examples/nocore-hello-world.rs
+cargo run -- --sysroot=`rustc --print sysroot` rust-examples/nocore-hello-world.rs --target=i686-unknown-linux-gnu
 ```
 
 ```
-RUST_LOG=mir2wasm cargo run -- --sysroot=`rustc --print sysroot` rust-examples/nocore-hello-world.rs
+RUST_LOG=mir2wasm cargo run -- --sysroot=`rustc --print sysroot` rust-examples/nocore-hello-world.rs --target=i686-unknown-linux-gnu
 ```
 
 ```
-rustc -Z unstable-options --unpretty=mir rust-examples/nocore-hello-world.rs
+rustc -Z unstable-options --unpretty=mir rust-examples/nocore-hello-world.rs --target=i686-unknown-linux-gnu
 ```
 
 [rustc docs](https://manishearth.github.io/rust-internals-docs/rustc/index.html).

@@ -6,6 +6,7 @@
 #[macro_use] extern crate rustc;
 extern crate rustc_mir;
 extern crate syntax;
+extern crate rustc_const_math;
 
 extern crate libc;
 

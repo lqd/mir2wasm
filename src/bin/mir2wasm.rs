@@ -25,6 +25,7 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
     ) -> driver::CompileController<'a> {
         let mut control = driver::CompileController::basic();
 
+        control.after_analysis.stop = rustc_driver::Compilation::Stop;
         control.after_analysis.callback = Box::new(|state| {
             state.session.abort_if_errors();
             trans::translate_crate(state.tcx.unwrap(), state.mir_map.unwrap())

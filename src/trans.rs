@@ -1,13 +1,14 @@
 use error::*;
-use rustc::mir::repr::{Mir, StatementKind, Lvalue, Rvalue};
+use rustc::mir::repr::*;
 use rustc::mir::mir_map::MirMap;
+use rustc::middle::const_val::ConstVal;
+use rustc_const_math::{ConstInt, ConstIsize};
 use rustc::ty::{self, TyCtxt, Ty, FnSig};
-use rustc::hir;
 use rustc::hir::intravisit::{self, Visitor, FnKind};
 use rustc::hir::{FnDecl, Block};
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
 use syntax::codemap::Span;
-use std::ffi::{CString, CStr};
+use std::ffi::CString;
 use std::ptr;
 use std::collections::HashMap;
 use binaryen::*;
@@ -44,7 +45,6 @@ struct HirVisitor<'v, 'tcx: 'v> {
 impl<'v, 'tcx> Visitor<'v> for HirVisitor<'v, 'tcx> {
     fn visit_fn(&mut self, fk: FnKind<'v>, fd: &'v FnDecl,
                 b: &'v Block, s: Span, id: NodeId) {
-        let item = self.tcx.map.expect_item(id);
         let mir = &self.mir_map.map[&id];
 
         let did = self.tcx.map.local_def_id(id);
@@ -136,8 +136,6 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         }
 
         unsafe {
-            let return_type : BinaryenType;
-
             if !self.fun_types.contains_key(self.sig) {
                 let name = self.sig.to_string();
                 let name = CString::new(name).expect("").into_raw(); // FIXME
@@ -180,8 +178,54 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         (i, 0)
     }
 
-    fn translate_rval(&mut self, rvalue: &Rvalue) -> BinaryenExpressionRef {
-        unsafe { BinaryenNop(self.module) }
+    fn translate_rval(&mut self, rvalue: &Rvalue<'tcx>) -> BinaryenExpressionRef {
+        unsafe {
+            match *rvalue {
+                Rvalue::Use(ref operand) => {
+                    self.translate_operand(operand)
+                }
+                Rvalue::BinaryOp(ref op, ref a, ref b) => {
+                    let a = self.translate_operand(a);
+                    let b = self.translate_operand(b);
+                    let op = match *op {
+                        BinOp::Add => BinaryenAdd(),
+                        _ => panic!()
+                    };
+                    BinaryenBinary(self.module, op, a, b)
+                }
+                _ => {
+                    BinaryenNop(self.module)
+                }
+            }
+        }
+    }
+
+    fn translate_operand(&mut self, operand: &Operand<'tcx>) -> BinaryenExpressionRef {
+        match *operand {
+            Operand::Consume(ref lvalue) => {
+                let (i, _) = self.translate_lval(lvalue);
+                let lval_ty = self.mir.lvalue_ty(self.tcx, lvalue);
+                let t = lval_ty.to_ty(self.tcx);
+                let t = rust_ty_to_binaryen(t);
+                unsafe { BinaryenGetLocal(self.module, i, t) }
+            }
+            Operand::Constant(ref c) => {
+                match c.literal {
+                    Literal::Value { ref value } => {
+                        match *value {
+                            ConstVal::Integral(ConstInt::Isize(ConstIsize::Is32(val))) => {
+                                unsafe {
+                                    let lit = BinaryenLiteralInt32(val);
+                                    BinaryenConst(self.module, lit)
+                                }
+                            }
+                            _ => panic!()
+                        }
+                    }
+                    _ => panic!()
+                }
+            }
+        }
     }
 }
 
