@@ -110,6 +110,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             locals.push(binaryen_ret);
         }
 
+        // reelooper helper for irreducible control flow
+        locals.push(unsafe { BinaryenInt32() });
+
         let relooper = unsafe { RelooperCreate() };
 
         let mut relooper_blocks = Vec::new();
@@ -126,6 +129,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     }
                 }
             }
+            match bb.terminator().kind {
+                TerminatorKind::Return => {
+                    let expr = self.translate_operand(&Operand::Consume(Lvalue::ReturnPointer));
+                    let expr = unsafe { BinaryenReturn(self.module, expr) };
+                    binaryen_stmts.push(expr);
+                }
+                _ => ()
+            }
             unsafe {
                 let binaryen_expr = BinaryenBlock(self.module, ptr::null(),
                                                   binaryen_stmts.as_ptr(),
@@ -135,9 +146,24 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             }
         }
 
+        for (i, bb) in self.mir.basic_blocks.iter().enumerate() {
+            match bb.terminator().kind {
+                TerminatorKind::Goto { ref target } => {
+                    unsafe {
+                        RelooperAddBranch(relooper_blocks[i], relooper_blocks[target.index()],
+                                          ptr::null_mut(), ptr::null_mut());
+                    }
+                }
+                TerminatorKind::Return => {
+                    /* handled during bb creation */
+                }
+                _ => panic!()
+            }
+        }
+
         unsafe {
             if !self.fun_types.contains_key(self.sig) {
-                let name = self.sig.to_string();
+                let name = self.id.to_string();
                 let name = CString::new(name).expect("").into_raw(); // FIXME
                 let ty = BinaryenAddFunctionType(self.module,
                                                  name,
@@ -146,11 +172,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 self.fun_types.insert(self.sig, ty);
             }
 
-            let name = self.tcx.node_path_str(self.id);
+            let name = self.id.to_string();//self.tcx.node_path_str(self.id);
             let name = CString::new(name).expect("").into_raw(); // FIXME
             let body = RelooperRenderAndDispose(relooper,
                                                 relooper_blocks[0],
-                                                !0, // FIXME
+                                                locals.len() as _,
                                                 self.module);
             BinaryenAddFunction(self.module, name,
                                 *self.fun_types.get(self.sig).unwrap(),
