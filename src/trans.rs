@@ -18,7 +18,7 @@ pub fn translate_crate<'tcx>(tcx: &TyCtxt<'tcx>,
 
     let _ignore = tcx.dep_graph.in_ignore();
 
-    let ref mut v = HirVisitor {
+    let ref mut v = BinaryenModuleCtxt {
         tcx: tcx,
         mir_map: mir_map,
         module: unsafe { BinaryenModuleCreate() },
@@ -35,14 +35,14 @@ pub fn translate_crate<'tcx>(tcx: &TyCtxt<'tcx>,
     Ok(())
 }
 
-struct HirVisitor<'v, 'tcx: 'v> {
+struct BinaryenModuleCtxt<'v, 'tcx: 'v> {
     tcx: &'v TyCtxt<'tcx>,
     mir_map: &'v MirMap<'tcx>,
     module: BinaryenModuleRef,
     fun_types: HashMap<&'tcx ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
 }
 
-impl<'v, 'tcx> Visitor<'v> for HirVisitor<'v, 'tcx> {
+impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
     fn visit_fn(&mut self, fk: FnKind<'v>, fd: &'v FnDecl,
                 b: &'v Block, s: Span, id: NodeId) {
         let mir = &self.mir_map.map[&id];
