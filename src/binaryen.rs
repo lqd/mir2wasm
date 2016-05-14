@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, non_snake_case)]
 
 use libc::{c_void, c_char, size_t};
 
@@ -44,7 +44,22 @@ pub struct RelooperRef(pub *mut c_void);
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub struct RelooperBlockRef(pub *mut c_void);
 
-extern {
+macro_rules! safe_externs {
+    ( $(pub fn $name:ident($($arg_name:ident: $arg_ty:ident), *) -> $rty:ident;) *) => {
+        $(
+            #[inline]
+            pub fn $name($($arg_name: $arg_ty), *) -> $rty {
+                extern {
+                    pub fn $name($($arg_name: $arg_ty), *) -> $rty;
+                }
+
+                unsafe { $name($($arg_name), *) }
+            }
+        ) *
+    }
+}
+
+safe_externs! {
     // Basic types
     pub fn BinaryenNone() -> BinaryenType;
     pub fn BinaryenInt32() -> BinaryenType;
@@ -53,7 +68,6 @@ extern {
     pub fn BinaryenFloat64() -> BinaryenType;
 
     // Literals
-
     pub fn BinaryenLiteralInt32(x: i32) -> BinaryenLiteral;
     pub fn BinaryenLiteralInt64(x: i64) -> BinaryenLiteral;
     pub fn BinaryenLiteralFloat32(x: f32) -> BinaryenLiteral;
@@ -61,16 +75,7 @@ extern {
     pub fn BinaryenLiteralFloat32Bits(x: i32) -> BinaryenLiteral;
     pub fn BinaryenLiteralFloat64Bits(x: i64) -> BinaryenLiteral;
 
-    // Modules
-    pub fn BinaryenModuleCreate() -> BinaryenModuleRef;
-    pub fn BinaryenModuleDispose(module: BinaryenModuleRef);
-
-    // Function types
-
-    pub fn BinaryenAddFunctionType(module: BinaryenModuleRef, name: *const c_char, result: BinaryenType, paramTypes: *const BinaryenType, numParams: BinaryenIndex) -> BinaryenFunctionTypeRef;
-
     // Ops
-
     pub fn BinaryenClz() -> BinaryenOp;
     pub fn BinaryenCtz() -> BinaryenOp;
     pub fn BinaryenPopcnt() -> BinaryenOp;
@@ -144,6 +149,17 @@ extern {
     pub fn BinaryenCurrentMemory() -> BinaryenOp;
     pub fn BinaryenGrowMemory() -> BinaryenOp;
     pub fn BinaryenHasFeature() -> BinaryenOp;
+}
+
+extern {
+
+    // Modules
+    pub fn BinaryenModuleCreate() -> BinaryenModuleRef;
+    pub fn BinaryenModuleDispose(module: BinaryenModuleRef);
+
+    // Function types
+
+    pub fn BinaryenAddFunctionType(module: BinaryenModuleRef, name: *const c_char, result: BinaryenType, paramTypes: *const BinaryenType, numParams: BinaryenIndex) -> BinaryenFunctionTypeRef;
 
     // Expressions
 

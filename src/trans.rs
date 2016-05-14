@@ -88,11 +88,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     needs_ret_local = true;
                     rust_ty_to_binaryen(t)
                 } else {
-                    unsafe { BinaryenNone() }
+                    BinaryenNone()
                 }
             },
             ty::FnOutput::FnDiverging => {
-                unsafe { BinaryenNone() }
+                BinaryenNone()
             }
         };
 
@@ -111,7 +111,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         }
 
         // reelooper helper for irreducible control flow
-        locals.push(unsafe { BinaryenInt32() });
+        locals.push(BinaryenInt32());
 
         let relooper = unsafe { RelooperCreate() };
 
@@ -263,16 +263,16 @@ fn rust_ty_to_binaryen<'tcx>(t: Ty<'tcx>) -> BinaryenType {
     // FIXME zero-sized-types
     match t.sty {
         ty::TyFloat(FloatTy::F32) => {
-            unsafe { BinaryenFloat32() }
+            BinaryenFloat32()
         },
         ty::TyFloat(FloatTy::F64) => {
-            unsafe { BinaryenFloat64() }
+            BinaryenFloat64()
         },
         ty::TyInt(IntTy::I64) | ty::TyUint(UintTy::U64) => {
-            unsafe { BinaryenInt64() }
+            BinaryenInt64()
         }
         _ => {
-            unsafe { BinaryenInt32() }
+            BinaryenInt32()
         }
     }
 }
