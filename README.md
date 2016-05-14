@@ -20,11 +20,13 @@ cargo build
 ```
 
 ```sh
-cargo run -- rust-examples/nocore-hello-world.rs
+cargo run -q -- rust-examples/nocore-hello-world.rs
 ```
 
+Do println debugging with `debug!` so it goes to stderr and print it like:
+
 ```
-RUST_LOG=mir2wasm cargo run -- rust-examples/nocore-hello-world.rs
+RUST_LOG=mir2wasm cargo run -q -- rust-examples/nocore-hello-world.rs
 ```
 
 ```
