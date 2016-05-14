@@ -123,9 +123,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 match stmt.kind {
                     StatementKind::Assign(ref lval, ref rval) => {
                         let (lval_i, _) = self.translate_lval(lval);
-                        let rval_expr = self.translate_rval(rval);
-                        let binaryen_stmt = unsafe { BinaryenSetLocal(self.module, lval_i, rval_expr) };
-                        binaryen_stmts.push(binaryen_stmt);
+                        if let Some(rval_expr) = self.translate_rval(rval) {
+                            let binaryen_stmt = unsafe { BinaryenSetLocal(self.module, lval_i, rval_expr) };
+                            binaryen_stmts.push(binaryen_stmt);
+                        }
                     }
                 }
             }
@@ -204,11 +205,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         (i, 0)
     }
 
-    fn translate_rval(&mut self, rvalue: &Rvalue<'tcx>) -> BinaryenExpressionRef {
+    fn translate_rval(&mut self, rvalue: &Rvalue<'tcx>) -> Option<BinaryenExpressionRef> {
         unsafe {
             match *rvalue {
                 Rvalue::Use(ref operand) => {
-                    self.translate_operand(operand)
+                    Some(self.translate_operand(operand))
                 }
                 Rvalue::BinaryOp(ref op, ref a, ref b) => {
                     let a = self.translate_operand(a);
@@ -217,10 +218,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         BinOp::Add => BinaryenAdd(),
                         _ => panic!()
                     };
-                    BinaryenBinary(self.module, op, a, b)
+                    Some(BinaryenBinary(self.module, op, a, b))
                 }
                 _ => {
-                    BinaryenNop(self.module)
+                    None
                 }
             }
         }

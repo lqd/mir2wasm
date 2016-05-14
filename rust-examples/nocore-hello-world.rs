@@ -42,3 +42,9 @@ fn main(i: isize, _: *const *const u8) -> isize {
     }*/
     return i + 2;
 }
+
+fn real_main() {
+    let i = 1;
+    let j = i + 2;
+}
+
