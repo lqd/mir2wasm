@@ -29,7 +29,6 @@ pub fn translate_crate<'tcx>(tcx: &TyCtxt<'tcx>,
 
     unsafe {
         BinaryenModulePrint(v.module);
-        BinaryenModuleDispose(v.module);
     }
 
     Ok(())
@@ -40,6 +39,12 @@ struct BinaryenModuleCtxt<'v, 'tcx: 'v> {
     mir_map: &'v MirMap<'tcx>,
     module: BinaryenModuleRef,
     fun_types: HashMap<&'tcx ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
+}
+
+impl<'v, 'tcx: 'v> Drop for BinaryenModuleCtxt<'v, 'tcx> {
+    fn drop(&mut self) {
+        unsafe { BinaryenModuleDispose(self.module) };
+    }
 }
 
 impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
