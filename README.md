@@ -20,11 +20,11 @@ cargo build
 ```
 
 ```sh
-cargo run -- --sysroot=`rustc --print sysroot` rust-examples/nocore-hello-world.rs
+cargo run -- rust-examples/nocore-hello-world.rs
 ```
 
 ```
-RUST_LOG=mir2wasm cargo run -- --sysroot=`rustc --print sysroot` rust-examples/nocore-hello-world.rs
+RUST_LOG=mir2wasm cargo run -- rust-examples/nocore-hello-world.rs
 ```
 
 ```
