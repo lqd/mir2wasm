@@ -28,7 +28,7 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
         control.after_analysis.stop = rustc_driver::Compilation::Stop;
         control.after_analysis.callback = Box::new(|state| {
             state.session.abort_if_errors();
-            trans::translate_crate(state.tcx.unwrap(), state.mir_map.unwrap())
+            trans::trans_crate(state.tcx.unwrap(), state.mir_map.unwrap())
                 .unwrap(); // FIXME
         });
 

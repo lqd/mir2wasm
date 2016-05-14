@@ -13,7 +13,7 @@ use std::ptr;
 use std::collections::HashMap;
 use binaryen::*;
 
-pub fn translate_crate<'tcx>(tcx: &TyCtxt<'tcx>,
+pub fn trans_crate<'tcx>(tcx: &TyCtxt<'tcx>,
                              mir_map: &MirMap<'tcx>) -> Result<()> {
 
     let _ignore = tcx.dep_graph.in_ignore();
@@ -69,7 +69,7 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
                 c_strings: &mut self.c_strings,
             };
 
-            ctxt.translate();
+            ctxt.trans();
         }
 
         intravisit::walk_fn(self, fk, fd, b, s)
@@ -87,7 +87,7 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
 }
 
 impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
-    fn translate(&mut self) {
+    fn trans(&mut self) {
 
         let binaryen_args: Vec<_> = self.sig.inputs.iter().map(|t| rust_ty_to_binaryen(t)).collect();
         let mut needs_ret_local = false;
@@ -131,8 +131,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             for stmt in &bb.statements {
                 match stmt.kind {
                     StatementKind::Assign(ref lval, ref rval) => {
-                        let (lval_i, _) = self.translate_lval(lval);
-                        if let Some(rval_expr) = self.translate_rval(rval) {
+                        let (lval_i, _) = self.trans_lval(lval);
+                        if let Some(rval_expr) = self.trans_rval(rval) {
                             let binaryen_stmt = unsafe { BinaryenSetLocal(self.module, lval_i, rval_expr) };
                             binaryen_stmts.push(binaryen_stmt);
                         }
@@ -141,7 +141,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             }
             match bb.terminator().kind {
                 TerminatorKind::Return => {
-                    let expr = self.translate_operand(&Operand::Consume(Lvalue::ReturnPointer));
+                    let expr = self.trans_operand(&Operand::Consume(Lvalue::ReturnPointer));
                     let expr = unsafe { BinaryenReturn(self.module, expr) };
                     binaryen_stmts.push(expr);
                 }
@@ -202,7 +202,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         }
     }
 
-    fn translate_lval(&mut self, lvalue: &Lvalue) -> (BinaryenIndex, u32) {
+    fn trans_lval(&mut self, lvalue: &Lvalue) -> (BinaryenIndex, u32) {
         let i = match *lvalue {
             Lvalue::Arg(i) => i,
             Lvalue::Var(i) => self.mir.arg_decls.len() as u32 + i,
@@ -221,15 +221,15 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         (BinaryenIndex(i), 0)
     }
 
-    fn translate_rval(&mut self, rvalue: &Rvalue<'tcx>) -> Option<BinaryenExpressionRef> {
+    fn trans_rval(&mut self, rvalue: &Rvalue<'tcx>) -> Option<BinaryenExpressionRef> {
         unsafe {
             match *rvalue {
                 Rvalue::Use(ref operand) => {
-                    Some(self.translate_operand(operand))
+                    Some(self.trans_operand(operand))
                 }
                 Rvalue::BinaryOp(ref op, ref a, ref b) => {
-                    let a = self.translate_operand(a);
-                    let b = self.translate_operand(b);
+                    let a = self.trans_operand(a);
+                    let b = self.trans_operand(b);
                     let op = match *op {
                         BinOp::Add => BinaryenAdd(),
                         _ => panic!()
@@ -243,10 +243,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         }
     }
 
-    fn translate_operand(&mut self, operand: &Operand<'tcx>) -> BinaryenExpressionRef {
+    fn trans_operand(&mut self, operand: &Operand<'tcx>) -> BinaryenExpressionRef {
         match *operand {
             Operand::Consume(ref lvalue) => {
-                let (i, _) = self.translate_lval(lvalue);
+                let (i, _) = self.trans_lval(lvalue);
                 let lval_ty = self.mir.lvalue_ty(self.tcx, lvalue);
                 let t = lval_ty.to_ty(self.tcx);
                 let t = rust_ty_to_binaryen(t);
