@@ -23,6 +23,7 @@ pub fn translate_crate<'tcx>(tcx: &TyCtxt<'tcx>,
         mir_map: mir_map,
         module: unsafe { BinaryenModuleCreate() },
         fun_types: HashMap::new(),
+        c_strings: Vec::new(),
     };
 
     tcx.map.krate().visit_all_items(v);
@@ -39,6 +40,7 @@ struct BinaryenModuleCtxt<'v, 'tcx: 'v> {
     mir_map: &'v MirMap<'tcx>,
     module: BinaryenModuleRef,
     fun_types: HashMap<&'tcx ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
+    c_strings: Vec<CString>,
 }
 
 impl<'v, 'tcx: 'v> Drop for BinaryenModuleCtxt<'v, 'tcx> {
@@ -64,6 +66,7 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
                 sig: &sig,
                 module: self.module,
                 fun_types: &mut self.fun_types,
+                c_strings: &mut self.c_strings,
             };
 
             ctxt.translate();
@@ -80,6 +83,7 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
     sig: &'tcx FnSig<'tcx>,
     module: BinaryenModuleRef,
     fun_types: &'v mut HashMap<&'tcx ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
+    c_strings: &'v mut Vec<CString>,
 }
 
 impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
@@ -171,22 +175,26 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         unsafe {
             if !self.fun_types.contains_key(self.sig) {
                 let name = self.id.to_string();
-                let name = CString::new(name).expect("").into_raw(); // FIXME
+                let name = CString::new(name).expect("");
+                let name_ptr = name.as_ptr();
+                self.c_strings.push(name);
                 let ty = BinaryenAddFunctionType(self.module,
-                                                 name,
+                                                 name_ptr,
                                                  binaryen_ret,
                                                  binaryen_args.as_ptr(),
                                                  BinaryenIndex(binaryen_args.len() as _));
                 self.fun_types.insert(self.sig, ty);
             }
 
-            let name = self.id.to_string();//self.tcx.node_path_str(self.id);
-            let name = CString::new(name).expect("").into_raw(); // FIXME
             let body = RelooperRenderAndDispose(relooper,
                                                 relooper_blocks[0],
                                                 BinaryenIndex(locals.len() as _),
                                                 self.module);
-            BinaryenAddFunction(self.module, name,
+            let name = self.id.to_string();//self.tcx.node_path_str(self.id);
+            let name = CString::new(name).expect("");
+            let name_ptr = name.as_ptr();
+            self.c_strings.push(name);
+            BinaryenAddFunction(self.module, name_ptr,
                                 *self.fun_types.get(self.sig).unwrap(),
                                 locals.as_ptr(),
                                 BinaryenIndex(locals.len() as _),
