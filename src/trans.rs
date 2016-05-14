@@ -190,7 +190,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                                 relooper_blocks[0],
                                                 BinaryenIndex(locals.len() as _),
                                                 self.module);
-            let name = self.id.to_string();//self.tcx.node_path_str(self.id);
+            let name = sanitize_symbol(&self.tcx.node_path_str(self.id));
             let name = CString::new(name).expect("");
             let name_ptr = name.as_ptr();
             self.c_strings.push(name);
@@ -288,4 +288,13 @@ fn rust_ty_to_binaryen<'tcx>(t: Ty<'tcx>) -> BinaryenType {
             BinaryenInt32()
         }
     }
+}
+
+fn sanitize_symbol(s: &str) -> String {
+    s.chars().map(|c| {
+        match c {
+            '<' | '>' | ' ' => '_',
+            _ => c
+        }
+    }).collect()
 }

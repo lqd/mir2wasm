@@ -35,6 +35,15 @@ rustc -Z unstable-options --unpretty=mir rust-examples/nocore-hello-world.rs
 
 [rustc docs](https://manishearth.github.io/rust-internals-docs/rustc/index.html).
 
+Plug this stuff into a wast file to print something:
+
+```
+  (import $print_i32 "spectest" "print" (param i32))
+  (export "foo" $foo)
+...
+    (call_import $print_i32 (get_local $1))
+```
+
 ## License
 
 Licensed under either of
