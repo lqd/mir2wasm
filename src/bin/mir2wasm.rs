@@ -40,6 +40,7 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
 fn main() {
     env_logger::init().unwrap();
 
-    let args: Vec<String> = std::env::args().collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    args.push("--target=arm-unknown-linux-gnueabi".to_string());
     rustc_driver::run_compiler(&args, &mut MiriCompilerCalls);
 }
