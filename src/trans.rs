@@ -174,7 +174,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
         unsafe {
             if !self.fun_types.contains_key(self.sig) {
-                let name = self.id.to_string();
+                let name = format!("rustfn-{}", self.id);
                 let name = CString::new(name).expect("");
                 let name_ptr = name.as_ptr();
                 self.c_strings.push(name);
