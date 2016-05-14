@@ -2,16 +2,34 @@
 
 use libc::{c_void, c_char, size_t};
 
-pub type BinaryenIndex = u32;
-pub type BinaryenType = u32;
-pub type BinaryenOp = u32;
+#[repr(C)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
+pub struct BinaryenIndex(pub u32);
+#[repr(C)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct BinaryenType(pub u32);
+#[repr(C)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct BinaryenOp(pub u32);
 
-pub type BinaryenModuleRef = *mut c_void;
-pub type BinaryenFunctionTypeRef = *mut c_void;
-pub type BinaryenExpressionRef = *mut c_void;
-pub type BinaryenFunctionRef = *mut c_void;
-pub type BinaryenImportRef = *mut c_void;
-pub type BinaryenExportRef = *mut c_void;
+#[repr(C)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct BinaryenModuleRef(pub *mut c_void);
+#[repr(C)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct BinaryenFunctionTypeRef(pub *mut c_void);
+#[repr(C)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct BinaryenExpressionRef(pub *mut c_void);
+#[repr(C)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct BinaryenFunctionRef(pub *mut c_void);
+#[repr(C)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct BinaryenImportRef(pub *mut c_void);
+#[repr(C)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct BinaryenExportRef(pub *mut c_void);
 
 #[repr(C)]
 pub struct BinaryenLiteral {
@@ -19,8 +37,12 @@ pub struct BinaryenLiteral {
     contents: i64,
 }
 
-pub type RelooperRef  = *mut c_void;
-pub type RelooperBlockRef = *mut c_void;
+#[repr(C)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct RelooperRef(pub *mut c_void);
+#[repr(C)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct RelooperBlockRef(pub *mut c_void);
 
 extern {
     // Basic types

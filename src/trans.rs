@@ -141,7 +141,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             unsafe {
                 let binaryen_expr = BinaryenBlock(self.module, ptr::null(),
                                                   binaryen_stmts.as_ptr(),
-                                                  binaryen_stmts.len() as _);
+                                                  BinaryenIndex(binaryen_stmts.len() as _));
                 let relooper_block = RelooperAddBlock(relooper, binaryen_expr);
                 relooper_blocks.push(relooper_block);
             }
@@ -152,7 +152,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 TerminatorKind::Goto { ref target } => {
                     unsafe {
                         RelooperAddBranch(relooper_blocks[i], relooper_blocks[target.index()],
-                                          ptr::null_mut(), ptr::null_mut());
+                                          BinaryenExpressionRef(ptr::null_mut()),
+                                          BinaryenExpressionRef(ptr::null_mut()));
                     }
                 }
                 TerminatorKind::Return => {
@@ -169,7 +170,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 let ty = BinaryenAddFunctionType(self.module,
                                                  name,
                                                  binaryen_ret,
-                                                 binaryen_args.as_ptr(), binaryen_args.len() as _);
+                                                 binaryen_args.as_ptr(),
+                                                 BinaryenIndex(binaryen_args.len() as _));
                 self.fun_types.insert(self.sig, ty);
             }
 
@@ -177,16 +179,17 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             let name = CString::new(name).expect("").into_raw(); // FIXME
             let body = RelooperRenderAndDispose(relooper,
                                                 relooper_blocks[0],
-                                                locals.len() as _,
+                                                BinaryenIndex(locals.len() as _),
                                                 self.module);
             BinaryenAddFunction(self.module, name,
                                 *self.fun_types.get(self.sig).unwrap(),
-                                locals.as_ptr(), locals.len() as _,
+                                locals.as_ptr(),
+                                BinaryenIndex(locals.len() as _),
                                 body);
         }
     }
 
-    fn translate_lval(&mut self, lvalue: &Lvalue) -> (u32, u32) {
+    fn translate_lval(&mut self, lvalue: &Lvalue) -> (BinaryenIndex, u32) {
         let i = match *lvalue {
             Lvalue::Arg(i) => i,
             Lvalue::Var(i) => self.mir.arg_decls.len() as u32 + i,
@@ -202,7 +205,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             _ => panic!()
         };
 
-        (i, 0)
+        (BinaryenIndex(i), 0)
     }
 
     fn translate_rval(&mut self, rvalue: &Rvalue<'tcx>) -> Option<BinaryenExpressionRef> {
