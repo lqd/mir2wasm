@@ -39,7 +39,7 @@ struct BinaryenModuleCtxt<'v, 'tcx: 'v> {
     tcx: &'v TyCtxt<'tcx>,
     mir_map: &'v MirMap<'tcx>,
     module: BinaryenModuleRef,
-    fun_types: HashMap<&'tcx ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
+    fun_types: HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     c_strings: Vec<CString>,
 }
 
@@ -82,7 +82,7 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
     id: NodeId,
     sig: &'tcx FnSig<'tcx>,
     module: BinaryenModuleRef,
-    fun_types: &'v mut HashMap<&'tcx ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
+    fun_types: &'v mut HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     c_strings: &'v mut Vec<CString>,
 }
 
@@ -183,7 +183,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                                  binaryen_ret,
                                                  binaryen_args.as_ptr(),
                                                  BinaryenIndex(binaryen_args.len() as _));
-                self.fun_types.insert(self.sig, ty);
+                self.fun_types.insert(self.sig.clone(), ty);
             }
 
             let body = RelooperRenderAndDispose(relooper,
