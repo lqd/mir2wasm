@@ -17,7 +17,7 @@ use binaryen::*;
 use monomorphize;
 
 pub fn trans_crate<'tcx>(tcx: &TyCtxt<'tcx>,
-                             mir_map: &MirMap<'tcx>) -> Result<()> {
+                         mir_map: &MirMap<'tcx>) -> Result<()> {
 
     let _ignore = tcx.dep_graph.in_ignore();
 
@@ -96,8 +96,11 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
 }
 
 impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
+    /// This is the main entry point for MIR->wasm fn translation
     fn trans(&mut self) {
 
+        // Maintain a cache of translated monomorphizations and bail
+        // if we've already seen this one.
         let fn_name_ptr;
         if self.fun_names.contains_key(&(self.did, self.sig.clone())) {
             return;
@@ -108,6 +111,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             self.fun_names.insert((self.did, self.sig.clone()), fn_name);
         }
 
+        // Translate arg and ret tys to wasm
         let binaryen_args: Vec<_> = self.sig.inputs.iter().map(|t| rust_ty_to_binaryen(t)).collect();
         let mut needs_ret_local = false;
         let binaryen_ret = match self.sig.output {
@@ -124,6 +128,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             }
         };
 
+        // Create the wasm locals
         let mut locals = Vec::new();
 
         for mir_local in &self.mir.var_decls {
@@ -140,7 +145,12 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
         // reelooper helper for irreducible control flow
         locals.push(BinaryenInt32());
+        let relooper_local = BinaryenIndex(locals.len() as _);
 
+        // Create the relooper for tying together basic blocks. We're
+        // going to first translate the basic blocks without the
+        // terminators, then go back over the basic blocks and use the
+        // terminators to configure the relooper.
         let relooper = unsafe { RelooperCreate() };
 
         let mut relooper_blocks = Vec::new();
@@ -158,6 +168,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     }
                 }
             }
+
+            // Some features of MIR terminators tranlate to wasm
+            // expressions, some translate to relooper edges. These
+            // are the expressions.
             match bb.terminator().kind {
                 TerminatorKind::Return => {
                     let expr = self.trans_operand(&Operand::Consume(Lvalue::ReturnPointer));
@@ -165,9 +179,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     binaryen_stmts.push(expr);
                 }
                 TerminatorKind::Call {
-                    ref func, ref args, ref destination, ref cleanup
+                    ref func, ref args, ref destination, ..
                 } => unsafe {
-                    let _ = cleanup; // FIXME
                     if let Some((b_func, b_fnty)) = self.trans_fn_name_direct(func) {
                         let b_args: Vec<_> = args.iter().map(|a| self.trans_operand(a)).collect();
                         let b_call = BinaryenCall(self.module,
@@ -200,6 +213,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             }
         }
 
+        // Create the relooper edges from the bb terminators
         for (i, bb) in self.mir.basic_blocks.iter().enumerate() {
             match bb.terminator().kind {
                 TerminatorKind::Goto { ref target } => {
@@ -213,8 +227,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     /* handled during bb creation */
                 }
                 TerminatorKind::Call {
-                    ref func, ref args, ref destination, ref cleanup
+                    ref destination, ref cleanup, ..
                 } => {
+                    let _ = cleanup; // FIXME
                     match *destination {
                         Some((_, ref target)) => {
                             unsafe {
@@ -246,7 +261,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
             let body = RelooperRenderAndDispose(relooper,
                                                 relooper_blocks[0],
-                                                BinaryenIndex(locals.len() as _),
+                                                relooper_local,
                                                 self.module);
             BinaryenAddFunction(self.module, fn_name_ptr,
                                 *self.fun_types.get(self.sig).unwrap(),
