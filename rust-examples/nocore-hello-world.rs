@@ -34,17 +34,17 @@ extern "rust-intrinsic" { fn transmute<T, U>(t: T) -> U; }
 #[no_mangle] pub extern fn rust_eh_register_frames () {}
 #[no_mangle] pub extern fn rust_eh_unregister_frames () {}
 
+fn real_main() {
+    let i = 1;
+    let j = i + 2;
+    main(j, 0 as _);
+}
+
 #[start]
 fn main(i: isize, _: *const *const u8) -> isize {
     /*unsafe {
         let (ptr, _): (*const u8, usize) = transmute("Hello!\0");
         puts(ptr);
-    }*/
-    return i + 2;
+}*/
+    return i + 3;
 }
-
-fn real_main() {
-    let i = 1;
-    let j = i + 2;
-}
-

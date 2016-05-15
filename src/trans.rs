@@ -1,3 +1,4 @@
+use libc::c_char;
 use error::*;
 use rustc::mir::repr::*;
 use rustc::mir::mir_map::MirMap;
@@ -6,12 +7,14 @@ use rustc_const_math::{ConstInt, ConstIsize};
 use rustc::ty::{self, TyCtxt, Ty, FnSig};
 use rustc::hir::intravisit::{self, Visitor, FnKind};
 use rustc::hir::{FnDecl, Block};
+use rustc::hir::def_id::DefId;
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
 use syntax::codemap::Span;
 use std::ffi::CString;
 use std::ptr;
 use std::collections::HashMap;
 use binaryen::*;
+use monomorphize;
 
 pub fn trans_crate<'tcx>(tcx: &TyCtxt<'tcx>,
                              mir_map: &MirMap<'tcx>) -> Result<()> {
@@ -23,6 +26,7 @@ pub fn trans_crate<'tcx>(tcx: &TyCtxt<'tcx>,
         mir_map: mir_map,
         module: unsafe { BinaryenModuleCreate() },
         fun_types: HashMap::new(),
+        fun_names: HashMap::new(),
         c_strings: Vec::new(),
     };
 
@@ -40,6 +44,7 @@ struct BinaryenModuleCtxt<'v, 'tcx: 'v> {
     mir_map: &'v MirMap<'tcx>,
     module: BinaryenModuleRef,
     fun_types: HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
+    fun_names: HashMap<(DefId, ty::FnSig<'tcx>), CString>,
     c_strings: Vec<CString>,
 }
 
@@ -61,11 +66,13 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
         {
             let mut ctxt = BinaryenFnCtxt {
                 tcx: self.tcx,
+                mir_map: self.mir_map,
                 mir: mir,
-                id: id,
+                did: did,
                 sig: &sig,
                 module: self.module,
                 fun_types: &mut self.fun_types,
+                fun_names: &mut self.fun_names,
                 c_strings: &mut self.c_strings,
             };
 
@@ -78,16 +85,28 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
 
 struct BinaryenFnCtxt<'v, 'tcx: 'v> {
     tcx: &'v TyCtxt<'tcx>,
+    mir_map: &'v MirMap<'tcx>,
     mir: &'v Mir<'tcx>,
-    id: NodeId,
-    sig: &'tcx FnSig<'tcx>,
+    did: DefId,
+    sig: &'v FnSig<'tcx>,
     module: BinaryenModuleRef,
     fun_types: &'v mut HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
+    fun_names: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), CString>,
     c_strings: &'v mut Vec<CString>,
 }
 
 impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
     fn trans(&mut self) {
+
+        let fn_name_ptr;
+        if self.fun_names.contains_key(&(self.did, self.sig.clone())) {
+            return;
+        } else {
+            let fn_name = sanitize_symbol(&self.tcx.item_path_str(self.did));
+            let fn_name = CString::new(fn_name).expect("");
+            fn_name_ptr = fn_name.as_ptr();
+            self.fun_names.insert((self.did, self.sig.clone()), fn_name);
+        }
 
         let binaryen_args: Vec<_> = self.sig.inputs.iter().map(|t| rust_ty_to_binaryen(t)).collect();
         let mut needs_ret_local = false;
@@ -145,6 +164,31 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     let expr = unsafe { BinaryenReturn(self.module, expr) };
                     binaryen_stmts.push(expr);
                 }
+                TerminatorKind::Call {
+                    ref func, ref args, ref destination, ref cleanup
+                } => unsafe {
+                    let _ = cleanup; // FIXME
+                    if let Some((b_func, b_fnty)) = self.trans_fn_name_direct(func) {
+                        let b_args: Vec<_> = args.iter().map(|a| self.trans_operand(a)).collect();
+                        let b_call = BinaryenCall(self.module,
+                                                  b_func,
+                                                  b_args.as_ptr(),
+                                                  BinaryenIndex(b_args.len() as _),
+                                                  b_fnty);
+                        match *destination {
+                            Some((ref lvalue, _)) => {
+                                let b_lvalue = self.trans_lval(lvalue);
+                                let b_set = BinaryenSetLocal(self.module, b_lvalue.0, b_call);
+                                binaryen_stmts.push(b_set);
+                            }
+                            _ => {
+                                binaryen_stmts.push(b_call);
+                            }
+                        }
+                    } else {
+                        panic!()
+                    }
+                },
                 _ => ()
             }
             unsafe {
@@ -168,13 +212,27 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 TerminatorKind::Return => {
                     /* handled during bb creation */
                 }
-                _ => panic!()
+                TerminatorKind::Call {
+                    ref func, ref args, ref destination, ref cleanup
+                } => {
+                    match *destination {
+                        Some((_, ref target)) => {
+                            unsafe {
+                                RelooperAddBranch(relooper_blocks[i], relooper_blocks[target.index()],
+                                                  BinaryenExpressionRef(ptr::null_mut()),
+                                                  BinaryenExpressionRef(ptr::null_mut()));
+                            }
+                        }
+                        _ => panic!()
+                    }
+                }
+                _ => panic!("unimplemented terminator {:?}", bb.terminator().kind)
             }
         }
 
         unsafe {
             if !self.fun_types.contains_key(self.sig) {
-                let name = format!("rustfn-{}", self.id);
+                let name = format!("rustfn-{}-{}", self.did.krate, self.did.index.as_u32());
                 let name = CString::new(name).expect("");
                 let name_ptr = name.as_ptr();
                 self.c_strings.push(name);
@@ -190,11 +248,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                                 relooper_blocks[0],
                                                 BinaryenIndex(locals.len() as _),
                                                 self.module);
-            let name = sanitize_symbol(&self.tcx.node_path_str(self.id));
-            let name = CString::new(name).expect("");
-            let name_ptr = name.as_ptr();
-            self.c_strings.push(name);
-            BinaryenAddFunction(self.module, name_ptr,
+            BinaryenAddFunction(self.module, fn_name_ptr,
                                 *self.fun_types.get(self.sig).unwrap(),
                                 locals.as_ptr(),
                                 BinaryenIndex(locals.len() as _),
@@ -265,9 +319,56 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             _ => panic!()
                         }
                     }
-                    _ => panic!()
+                    _ => panic!("{:?}", c)
                 }
             }
+        }
+    }
+
+    fn trans_fn_name_direct(&mut self, operand: &Operand<'tcx>) -> Option<(*const c_char, BinaryenType)> {
+        match *operand {
+            Operand::Constant(ref c) => {
+                match c.literal {
+                    Literal::Item { def_id, ref substs } => {
+                        let ty = self.tcx.lookup_item_type(def_id).ty;
+                        if ty.is_fn() {
+                            assert!(def_id.is_local());
+                            let nid = self.tcx.map.as_local_node_id(def_id).expect("");
+                            let mir = &self.mir_map.map[&nid];
+                            let sig = ty.fn_sig().skip_binder();
+                            let sig = monomorphize::apply_param_substs(self.tcx, substs, sig);
+                            {
+                                let mut ctxt = BinaryenFnCtxt {
+                                    tcx: self.tcx,
+                                    mir_map: self.mir_map,
+                                    mir: mir,
+                                    did: def_id,
+                                    sig: &sig,
+                                    module: self.module,
+                                    fun_types: &mut self.fun_types,
+                                    fun_names: &mut self.fun_names,
+                                    c_strings: &mut self.c_strings,
+                                };
+
+                                ctxt.trans();
+                            }
+
+                            let ret_ty = match sig.output {
+                                ty::FnOutput::FnConverging(ref t) => {
+                                    rust_ty_to_binaryen(t)
+                                }
+                                _ => panic!()
+                            };
+
+                            Some((self.fun_names[&(def_id, sig)].as_ptr(), ret_ty))
+                        } else {
+                            panic!();
+                        }
+                    }
+                    _ => panic!("{:?}", c)
+                }
+            }
+            _ => panic!()
         }
     }
 }
