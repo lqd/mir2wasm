@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use binaryen::*;
 use monomorphize;
 
-pub fn trans_crate<'tcx>(tcx: &TyCtxt<'tcx>,
+pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                          mir_map: &MirMap<'tcx>) -> Result<()> {
 
     let _ignore = tcx.dep_graph.in_ignore();
@@ -40,7 +40,7 @@ pub fn trans_crate<'tcx>(tcx: &TyCtxt<'tcx>,
 }
 
 struct BinaryenModuleCtxt<'v, 'tcx: 'v> {
-    tcx: &'v TyCtxt<'tcx>,
+    tcx: &'v TyCtxt<'v, 'tcx, 'tcx>,
     mir_map: &'v MirMap<'tcx>,
     module: BinaryenModuleRef,
     fun_types: HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
@@ -84,7 +84,7 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
 }
 
 struct BinaryenFnCtxt<'v, 'tcx: 'v> {
-    tcx: &'v TyCtxt<'tcx>,
+    tcx: &'v TyCtxt<'v, 'tcx, 'tcx>,
     mir_map: &'v MirMap<'tcx>,
     mir: &'v Mir<'tcx>,
     did: DefId,
@@ -316,8 +316,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         match *operand {
             Operand::Consume(ref lvalue) => {
                 let (i, _) = self.trans_lval(lvalue);
-                let lval_ty = self.mir.lvalue_ty(self.tcx, lvalue);
-                let t = lval_ty.to_ty(self.tcx);
+                let lval_ty = self.mir.lvalue_ty(*self.tcx, lvalue);
+                let t = lval_ty.to_ty(*self.tcx);
                 let t = rust_ty_to_binaryen(t);
                 unsafe { BinaryenGetLocal(self.module, i, t) }
             }
