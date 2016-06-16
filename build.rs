@@ -1,6 +1,13 @@
 extern crate cmake;
 
+use std::process::Command;
+use std::path::Path;
+
 fn main() {
+    if !Path::new("binaryen/.git").exists() {
+        let _ = Command::new("git").args(&["submodule", "update", "--init"])
+                        .status();
+    }
     let dst = cmake::build("binaryen");
 
     println!("cargo:rustc-link-search=native={}/build/lib", dst.display());
