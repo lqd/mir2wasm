@@ -57,11 +57,16 @@ impl<'v, 'tcx: 'v> Drop for BinaryenModuleCtxt<'v, 'tcx> {
 impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
     fn visit_fn(&mut self, fk: FnKind<'v>, fd: &'v FnDecl,
                 b: &'v Block, s: Span, id: NodeId) {
-        let mir = &self.mir_map.map[&id];
-
         let did = self.tcx.map.local_def_id(id);
-        let ty = self.tcx.lookup_item_type(did).ty;
-        let sig = ty.fn_sig().skip_binder();
+        let type_scheme = self.tcx.lookup_item_type(did);
+
+        // don't translate generic functions yet
+        if !type_scheme.generics.types.is_empty() {
+            return;
+        }
+
+        let mir = &self.mir_map.map[&id];
+        let sig = type_scheme.ty.fn_sig().skip_binder();
 
         {
             let mut ctxt = BinaryenFnCtxt {
@@ -313,7 +318,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         BinOp::Sub => BinaryenSub(),
                         BinOp::Mul => BinaryenMul(),
                         BinOp::Div => BinaryenDivS(),
-                        _ => panic!()
+                        BinOp::Eq => BinaryenEq(),
+                        BinOp::Ne => BinaryenNe(),
+                        _ => panic!("Unhandled BinOp: {:?}", op)
                     };
                     Some(BinaryenBinary(self.module, op, a, b))
                 }

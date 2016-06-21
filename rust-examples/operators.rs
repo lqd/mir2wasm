@@ -94,12 +94,28 @@ impl DivAssign for isize {
     fn div_assign(&mut self, other: isize) { *self /= other }
 }
 
+#[lang = "eq"]
+pub trait PartialEq<Rhs: ?Sized = Self> {
+    fn eq(&self, other: &Rhs) -> bool;
+
+    #[inline]
+    fn ne(&self, other: &Rhs) -> bool { !self.eq(other) }
+}
+
+impl PartialEq for isize {
+    #[inline]
+    fn eq(&self, other: &isize) -> bool { (*self) == (*other) }
+    #[inline]
+    fn ne(&self, other: &isize) -> bool { (*self) != (*other) }
+}
+
 fn test() {
     let mut i = 0;
     i += 3;
     i *= 4;
     i /= 6;
     i -= 1;
+    let j = i == 1;
     main(i, 0 as _);
 }
 
