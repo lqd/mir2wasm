@@ -301,6 +301,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     let b = self.trans_operand(b);
                     let op = match *op {
                         BinOp::Add => BinaryenAdd(),
+                        BinOp::Sub => BinaryenSub(),
+                        BinOp::Mul => BinaryenMul(),
+                        BinOp::Div => BinaryenDivS(),
                         _ => panic!()
                     };
                     Some(BinaryenBinary(self.module, op, a, b))
