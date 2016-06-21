@@ -284,7 +284,16 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     self.mir.var_decls.len() as u32 +
                     self.mir.temp_decls.len() as u32
             }
-            _ => panic!()
+            Lvalue::Projection(ref projection) => {
+                if projection.elem == ProjectionElem::Deref {
+                    let (i, _) = self.trans_lval(&projection.base);
+                    i.0
+                }
+                else {
+                    panic!("Unhandled ProjectionElem: {:?}", projection.elem);
+                }
+            }
+            _ => panic!("Unhandled Lvalue: {:?}", lvalue)
         };
 
         (BinaryenIndex(i), 0)

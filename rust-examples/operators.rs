@@ -5,6 +5,11 @@
 #[fundamental]
 pub trait Sized { }
 
+#[lang = "copy"]
+pub trait Copy : Clone { }
+
+pub trait Clone : Sized { }
+
 #[lang = "add"]
 pub trait Add<RHS = Self> {
     type Output;
@@ -49,8 +54,53 @@ impl Div for isize {
     fn div(self, rhs: isize) -> Self::Output { self / rhs }
 }
 
+impl AddAssign for isize {
+    #[inline]
+    fn add_assign(&mut self, other: isize) { *self += other }
+}
+
+#[lang = "add_assign"]
+pub trait AddAssign<Rhs=Self> {
+    fn add_assign(&mut self, Rhs);
+}
+
+#[lang = "sub_assign"]
+pub trait SubAssign<Rhs=Self> {
+    fn sub_assign(&mut self, Rhs);
+}
+
+impl SubAssign for isize {
+    #[inline]
+    fn sub_assign(&mut self, other: isize) { *self -= other }
+}
+
+#[lang = "mul_assign"]
+pub trait MulAssign<Rhs=Self> {
+    fn mul_assign(&mut self, Rhs);
+}
+
+impl MulAssign for isize {
+    #[inline]
+    fn mul_assign(&mut self, other: isize) { *self *= other }
+}
+
+#[lang = "div_assign"]
+pub trait DivAssign<Rhs=Self> {
+    fn div_assign(&mut self, Rhs);
+}
+
+impl DivAssign for isize {
+    #[inline]
+    fn div_assign(&mut self, other: isize) { *self /= other }
+}
+
 fn test() {
-    main(1, 0 as _);
+    let mut i = 0;
+    i += 3;
+    i *= 4;
+    i /= 6;
+    i -= 1;
+    main(i, 0 as _);
 }
 
 #[start]
