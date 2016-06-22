@@ -314,12 +314,12 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     let a = self.trans_operand(a);
                     let b = self.trans_operand(b);
                     let op = match *op {
-                        BinOp::Add => BinaryenAdd(),
-                        BinOp::Sub => BinaryenSub(),
-                        BinOp::Mul => BinaryenMul(),
-                        BinOp::Div => BinaryenDivS(),
-                        BinOp::Eq => BinaryenEq(),
-                        BinOp::Ne => BinaryenNe(),
+                        BinOp::Add => BinaryenAddInt32(),
+                        BinOp::Sub => BinaryenSubInt32(),
+                        BinOp::Mul => BinaryenMulInt32(),
+                        BinOp::Div => BinaryenDivSInt32(),
+                        BinOp::Eq => BinaryenEqInt32(),
+                        BinOp::Ne => BinaryenNeInt32(),
                         _ => panic!("Unhandled BinOp: {:?}", op)
                     };
                     Some(BinaryenBinary(self.module, op, a, b))
