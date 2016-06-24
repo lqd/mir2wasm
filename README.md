@@ -46,6 +46,14 @@ Plug this stuff into a wast file to print something:
     (call_import $print_i32 (get_local $1))
 ```
 
+## Resources
+
+* [miri](https://github.com/solson/miri) the MIR interpreter. mir2wasm is derived
+  from it but shares no actualy code. It prorbably should share code though, and
+  there's lots to learn from miri.
+* [rustc_trans::mir](https://github.com/rust-lang/rust/tree/master/src/librustc_trans/mir).
+* [roadmap discussion](https://github.com/brson/mir2wasm/issues/17).
+
 ## License
 
 Licensed under either of
