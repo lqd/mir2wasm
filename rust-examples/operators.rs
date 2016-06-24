@@ -54,14 +54,14 @@ impl Div for isize {
     fn div(self, rhs: isize) -> Self::Output { self / rhs }
 }
 
-impl AddAssign for isize {
-    #[inline]
-    fn add_assign(&mut self, other: isize) { *self += other }
-}
-
 #[lang = "add_assign"]
 pub trait AddAssign<Rhs=Self> {
     fn add_assign(&mut self, Rhs);
+}
+
+impl AddAssign for isize {
+    #[inline]
+    fn add_assign(&mut self, other: isize) { *self += other }
 }
 
 #[lang = "sub_assign"]

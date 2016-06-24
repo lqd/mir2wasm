@@ -17,7 +17,8 @@ use binaryen::*;
 use monomorphize;
 
 pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
-                         mir_map: &MirMap<'tcx>) -> Result<()> {
+                             mir_map: &MirMap<'tcx>,
+                             entry_fn: Option<NodeId>) -> Result<()> {
 
     let _ignore = tcx.dep_graph.in_ignore();
 
@@ -33,6 +34,23 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
     tcx.map.krate().visit_all_items(v);
 
     unsafe {
+        // export #[start] or #[main] entry fn when available
+        if let Some(entry_fn) = entry_fn {
+            let entry_def_id = tcx.map.local_def_id(entry_fn);
+            for (&(def_id, _), _) in &v.fun_names {
+                if entry_def_id == def_id {
+                    let name = tcx.item_path_str(entry_def_id);
+                    debug!("emitting Export for entry fn {:?}", name);
+                    let name = CString::new(name).expect("");
+                    let name_ptr = name.as_ptr();
+                    v.c_strings.push(name);
+
+                    BinaryenAddExport(v.module, name_ptr, name_ptr);
+                    // TODO: maybe also set the #[main] fn as wasm Start ?
+                }
+            }
+        }
+
         BinaryenModulePrint(v.module);
     }
 
@@ -116,6 +134,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             self.fun_names.insert((self.did, self.sig.clone()), fn_name);
         }
 
+        debug!("translating fn {:?}", self.tcx.item_path_str(self.did));
+
         // Translate arg and ret tys to wasm
         let binaryen_args: Vec<_> = self.sig.inputs.iter().map(|t| rust_ty_to_binaryen(t)).collect();
         let mut needs_ret_local = false;
@@ -152,6 +172,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         locals.push(BinaryenInt32());
         let relooper_local = BinaryenIndex(locals.len() as _);
 
+        debug!("{} wasm locals found", locals.len()); // c'est pas trop tot de printer ça ici ? y a des diffs ds l'output
+
         // Create the relooper for tying together basic blocks. We're
         // going to first translate the basic blocks without the
         // terminators, then go back over the basic blocks and use the
@@ -160,13 +182,18 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
         let mut relooper_blocks = Vec::new();
 
-        for bb in &self.mir.basic_blocks {
+        debug!("{} MIR basic blocks to translate", self.mir.basic_blocks.len());
+
+        for (i, bb) in self.mir.basic_blocks.iter().enumerate() {
+            debug!("bb{}: {:#?}", i, bb);
+
             let mut binaryen_stmts = Vec::new();
             for stmt in &bb.statements {
                 match stmt.kind {
                     StatementKind::Assign(ref lval, ref rval) => {
                         let (lval_i, _) = self.trans_lval(lval);
                         if let Some(rval_expr) = self.trans_rval(rval) {
+                            debug!("emitting SetLocal for Assign '{:?} = {:?}'", lval, rval);
                             let binaryen_stmt = unsafe { BinaryenSetLocal(self.module, lval_i, rval_expr) };
                             binaryen_stmts.push(binaryen_stmt);
                         }
@@ -179,6 +206,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             // are the expressions.
             match bb.terminator().kind {
                 TerminatorKind::Return => {
+                    debug!("emitting Return from fn {:?}", self.tcx.item_path_str(self.did));
                     let expr = self.trans_operand(&Operand::Consume(Lvalue::ReturnPointer));
                     let expr = unsafe { BinaryenReturn(self.module, expr) };
                     binaryen_stmts.push(expr);
@@ -195,11 +223,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                                   b_fnty);
                         match *destination {
                             Some((ref lvalue, _)) => {
+                                debug!("emitting Call to fn {:?} + SetLocal the result", func);
                                 let b_lvalue = self.trans_lval(lvalue);
                                 let b_set = BinaryenSetLocal(self.module, b_lvalue.0, b_call);
                                 binaryen_stmts.push(b_set);
                             }
                             _ => {
+                                debug!("emitting Call to fn {:?}", func);
                                 binaryen_stmts.push(b_call);
                             }
                         }
@@ -210,10 +240,15 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 _ => ()
             }
             unsafe {
-                let binaryen_expr = BinaryenBlock(self.module, ptr::null(),
+                let name = format!("bb{}", i);
+                let name = CString::new(name).expect("");
+                let name_ptr = name.as_ptr();
+                self.c_strings.push(name);
+                let binaryen_expr = BinaryenBlock(self.module, name_ptr,
                                                   binaryen_stmts.as_ptr(),
                                                   BinaryenIndex(binaryen_stmts.len() as _));
                 let relooper_block = RelooperAddBlock(relooper, binaryen_expr);
+                debug!("emitting {}-statement Block bb{}", binaryen_stmts.len(), i);
                 relooper_blocks.push(relooper_block);
             }
         }
@@ -222,8 +257,23 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         for (i, bb) in self.mir.basic_blocks.iter().enumerate() {
             match bb.terminator().kind {
                 TerminatorKind::Goto { ref target } => {
+                    debug!("emitting Branch for Goto, from bb{} to bb{}", i, target.index());
                     unsafe {
                         RelooperAddBranch(relooper_blocks[i], relooper_blocks[target.index()],
+                                          BinaryenExpressionRef(ptr::null_mut()),
+                                          BinaryenExpressionRef(ptr::null_mut()));
+                    }
+                }
+                TerminatorKind::If { ref cond, ref targets } => {
+                    debug!("emitting Branches for If, from bb{} to bb{} and bb{}", i, targets.0.index(), targets.1.index());
+
+                    let cond = self.trans_operand(cond);
+
+                    unsafe {
+                        RelooperAddBranch(relooper_blocks[i], relooper_blocks[targets.0.index()],
+                                          cond,
+                                          BinaryenExpressionRef(ptr::null_mut()));
+                        RelooperAddBranch(relooper_blocks[i], relooper_blocks[targets.1.index()],
                                           BinaryenExpressionRef(ptr::null_mut()),
                                           BinaryenExpressionRef(ptr::null_mut()));
                     }
@@ -237,6 +287,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     let _ = cleanup; // FIXME
                     match *destination {
                         Some((_, ref target)) => {
+                            debug!("emitting Branch for Call, from bb{} to bb{}", i, target.index());
                             unsafe {
                                 RelooperAddBranch(relooper_blocks[i], relooper_blocks[target.index()],
                                                   BinaryenExpressionRef(ptr::null_mut()),
@@ -274,6 +325,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 BinaryenIndex(locals.len() as _),
                                 body);
         }
+
+        debug!("done translating fn {:?}\n", self.tcx.item_path_str(self.did));
     }
 
     fn trans_lval(&mut self, lvalue: &Lvalue) -> (BinaryenIndex, u32) {
@@ -293,12 +346,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 if projection.elem == ProjectionElem::Deref {
                     let (i, _) = self.trans_lval(&projection.base);
                     i.0
-                }
-                else {
-                    panic!("Unhandled ProjectionElem: {:?}", projection.elem);
+                } else {
+                    panic!("unimplemented ProjectionElem: {:?}", projection.elem);
                 }
             }
-            _ => panic!("Unhandled Lvalue: {:?}", lvalue)
+            _ => panic!("unimplemented Lvalue: {:?}", lvalue)
         };
 
         (BinaryenIndex(i), 0)
@@ -313,6 +365,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 Rvalue::BinaryOp(ref op, ref a, ref b) => {
                     let a = self.trans_operand(a);
                     let b = self.trans_operand(b);
+                    // TODO: implement binary ops for other types than just i32s
                     let op = match *op {
                         BinOp::Add => BinaryenAddInt32(),
                         BinOp::Sub => BinaryenSubInt32(),
@@ -320,7 +373,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         BinOp::Div => BinaryenDivSInt32(),
                         BinOp::Eq => BinaryenEqInt32(),
                         BinOp::Ne => BinaryenNeInt32(),
-                        _ => panic!("Unhandled BinOp: {:?}", op)
+                        _ => panic!("unimplemented BinOp: {:?}", op)
                     };
                     Some(BinaryenBinary(self.module, op, a, b))
                 }
@@ -350,7 +403,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     BinaryenConst(self.module, lit)
                                 }
                             }
-                            _ => panic!()
+                            ConstVal::Bool (val) => {
+                                let val = if val { 1 } else { 0 };
+                                unsafe {
+                                    let lit = BinaryenLiteralInt32(val);
+                                    BinaryenConst(self.module, lit)
+                                }
+                            }
+                            _ => panic!("unimplemented value: {:?}", value)
                         }
                     }
                     _ => panic!("{:?}", c)
