@@ -109,6 +109,13 @@ impl PartialEq for isize {
     fn ne(&self, other: &isize) -> bool { (*self) != (*other) }
 }
 
+// access to the wasm "spectest" module test printing functions
+mod wasm {
+    extern {
+        pub fn print_i32(i: isize);
+    }
+}
+
 fn test() {
     let mut i = 0;
     i += 3;
@@ -116,7 +123,9 @@ fn test() {
     i /= 6;
     i -= 1;
     let j = i == 1;
-    main(i, 0 as _);
+
+    let result = main(i, 0 as _);
+    unsafe { wasm::print_i32(result); } // (i32.const 2)
 }
 
 #[start]
