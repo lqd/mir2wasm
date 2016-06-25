@@ -34,10 +34,18 @@ extern "rust-intrinsic" { fn transmute<T, U>(t: T) -> U; }
 #[no_mangle] pub extern fn rust_eh_register_frames () {}
 #[no_mangle] pub extern fn rust_eh_unregister_frames () {}
 
+// access to the wasm "spectest" module test printing functions
+mod wasm {
+    extern {
+        pub fn print_i32(i: isize);
+    }
+}
+
 fn real_main() {
     let i = 1;
     let j = i + 2;
-    main(j, 0 as _);
+    let result = main(j, 0 as _);
+    unsafe { wasm::print_i32(result); } // (i32.const 6)
 }
 
 #[start]

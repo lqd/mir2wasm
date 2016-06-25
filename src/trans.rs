@@ -28,6 +28,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         module: unsafe { BinaryenModuleCreate() },
         fun_types: HashMap::new(),
         fun_names: HashMap::new(),
+        fun_refs: HashMap::new(),
         c_strings: Vec::new(),
     };
 
@@ -36,21 +37,25 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
     unsafe {
         // export #[start] or #[main] entry fn when available
         if let Some(entry_fn) = entry_fn {
-            let entry_def_id = tcx.map.local_def_id(entry_fn);
-            for (&(def_id, _), _) in &v.fun_names {
-                if entry_def_id == def_id {
-                    let name = tcx.item_path_str(entry_def_id);
+            let entry_fn_did = tcx.map.local_def_id(entry_fn);
+            for (&(did, ref sig), name) in &v.fun_names {
+                if entry_fn_did == did {
                     debug!("emitting Export for entry fn {:?}", name);
-                    let name = CString::new(name).expect("");
-                    let name_ptr = name.as_ptr();
-                    v.c_strings.push(name);
+                    BinaryenAddExport(v.module, name.as_ptr(), name.as_ptr());
 
-                    BinaryenAddExport(v.module, name_ptr, name_ptr);
-                    // TODO: maybe also set the #[main] fn as wasm Start ?
+                    let mir = mir_map.map.get(&entry_fn).expect("no mir for main function");
+                    if mir.arg_decls.len() == 0 {
+                        // we have a #[main] fn, set it as the module start method
+                        debug!("emitting SetStart for #[main] fn {:?}", name);
+                        let module_start_fn = v.fun_refs[&(did, sig.clone())];
+                        BinaryenSetStart(v.module, module_start_fn);
+                    }
                 }
             }
         }
 
+        // TODO: validate the module
+        // TODO: make it possible to print the optimized module
         BinaryenModulePrint(v.module);
     }
 
@@ -63,6 +68,7 @@ struct BinaryenModuleCtxt<'v, 'tcx: 'v> {
     module: BinaryenModuleRef,
     fun_types: HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     fun_names: HashMap<(DefId, ty::FnSig<'tcx>), CString>,
+    fun_refs: HashMap<(DefId, ty::FnSig<'tcx>), BinaryenFunctionRef>,
     c_strings: Vec<CString>,
 }
 
@@ -96,6 +102,7 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
                 module: self.module,
                 fun_types: &mut self.fun_types,
                 fun_names: &mut self.fun_names,
+                fun_refs: &mut self.fun_refs,
                 c_strings: &mut self.c_strings,
             };
 
@@ -115,7 +122,15 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
     module: BinaryenModuleRef,
     fun_types: &'v mut HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     fun_names: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), CString>,
+    fun_refs: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), BinaryenFunctionRef>,
     c_strings: &'v mut Vec<CString>,
+}
+
+#[derive(Debug)]
+enum BinaryenCallKind {
+    Direct,
+    Import,
+    // Indirect // unimplemented at the moment
 }
 
 impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
@@ -172,7 +187,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         locals.push(BinaryenInt32());
         let relooper_local = BinaryenIndex(locals.len() as _);
 
-        debug!("{} wasm locals found", locals.len()); // c'est pas trop tot de printer ça ici ? y a des diffs ds l'output
+        debug!("{} wasm locals found", locals.len());
 
         // Create the relooper for tying together basic blocks. We're
         // going to first translate the basic blocks without the
@@ -214,19 +229,60 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 TerminatorKind::Call {
                     ref func, ref args, ref destination, ..
                 } => unsafe {
-                    if let Some((b_func, b_fnty)) = self.trans_fn_name_direct(func) {
+                    if let Some((b_func, b_fnty, call_kind)) = self.trans_fn_name_direct(func) {
                         let b_args: Vec<_> = args.iter().map(|a| self.trans_operand(a)).collect();
-                        let b_call = BinaryenCall(self.module,
-                                                  b_func,
-                                                  b_args.as_ptr(),
-                                                  BinaryenIndex(b_args.len() as _),
-                                                  b_fnty);
+                        let b_call = match call_kind {
+                            BinaryenCallKind::Direct => {
+                                BinaryenCall(self.module,
+                                             b_func,
+                                             b_args.as_ptr(),
+                                             BinaryenIndex(b_args.len() as _),
+                                             b_fnty)
+                            }
+                            BinaryenCallKind::Import => {
+                                BinaryenCallImport(self.module,
+                                                   b_func,
+                                                   b_args.as_ptr(),
+                                                   BinaryenIndex(b_args.len() as _),
+                                                   b_fnty)
+                            }
+                        };
+
                         match *destination {
                             Some((ref lvalue, _)) => {
-                                debug!("emitting Call to fn {:?} + SetLocal the result", func);
                                 let b_lvalue = self.trans_lval(lvalue);
-                                let b_set = BinaryenSetLocal(self.module, b_lvalue.0, b_call);
-                                binaryen_stmts.push(b_set);
+
+                                // TODO: simplify getting the locals' type
+                                let t = match *lvalue {
+                                    Lvalue::Var(i) => &self.mir.var_decls[i as usize].ty,
+                                    Lvalue::Temp(i) => &self.mir.temp_decls[i as usize].ty,
+                                    _ => panic!("unimplemented LValue Call destination")
+                                };
+
+                                // TODO: file a bug for the ICE caused by changing the previous match to:
+                                // match *lvalue {
+                                //    lvalue::X(i) => i
+                                // }
+                                // -> error: internal compiler error: ../src/librustc/middle/mem_categorization.rs:1271:
+                                //     enum pattern didn't resolve to enum or struct None
+
+                                match t.sty {
+                                    ty::TyTuple(tuple) => {
+                                        if tuple.len() == 0 {
+                                            // TODO: what representation should the unit type have in wasm ?
+                                            debug!("emitting {:?} Call to fn {:?} + SetLocal for unit type", call_kind, func);
+                                            binaryen_stmts.push(b_call);
+                                            let unit_type = BinaryenConst(self.module, BinaryenLiteralInt32(0));
+                                            binaryen_stmts.push(BinaryenSetLocal(self.module, b_lvalue.0, unit_type));
+                                        } else {
+                                            panic!("unimplemented Tuple type");
+                                        }
+                                    }
+                                    _ => {
+                                        debug!("emitting {:?} Call to fn {:?} + SetLocal of the result", call_kind, func);
+                                        binaryen_stmts.push(BinaryenSetLocal(self.module, b_lvalue.0, b_call));
+                                    }
+                                }
                             }
                             _ => {
                                 debug!("emitting Call to fn {:?}", func);
@@ -319,11 +375,12 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                                 relooper_blocks[0],
                                                 relooper_local,
                                                 self.module);
-            BinaryenAddFunction(self.module, fn_name_ptr,
-                                *self.fun_types.get(self.sig).unwrap(),
-                                locals.as_ptr(),
-                                BinaryenIndex(locals.len() as _),
-                                body);
+            let f = BinaryenAddFunction(self.module, fn_name_ptr,
+                                        *self.fun_types.get(self.sig).unwrap(),
+                                        locals.as_ptr(),
+                                        BinaryenIndex(locals.len() as _),
+                                        body);
+            self.fun_refs.insert((self.did, self.sig.clone()), f);
         }
 
         debug!("done translating fn {:?}\n", self.tcx.item_path_str(self.did));
@@ -397,7 +454,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 match c.literal {
                     Literal::Value { ref value } => {
                         match *value {
-                            ConstVal::Integral(ConstInt::Isize(ConstIsize::Is32(val))) => {
+                            ConstVal::Integral(ConstInt::Isize(ConstIsize::Is32(val))) |
+                            ConstVal::Integral(ConstInt::I32(val)) => {
                                 unsafe {
                                     let lit = BinaryenLiteralInt32(val);
                                     BinaryenConst(self.module, lit)
@@ -419,7 +477,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         }
     }
 
-    fn trans_fn_name_direct(&mut self, operand: &Operand<'tcx>) -> Option<(*const c_char, BinaryenType)> {
+    fn trans_fn_name_direct(&mut self, operand: &Operand<'tcx>) -> Option<(*const c_char, BinaryenType, BinaryenCallKind)> {
         match *operand {
             Operand::Constant(ref c) => {
                 match c.literal {
@@ -427,34 +485,47 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         let ty = self.tcx.lookup_item_type(def_id).ty;
                         if ty.is_fn() {
                             assert!(def_id.is_local());
-                            let nid = self.tcx.map.as_local_node_id(def_id).expect("");
-                            let mir = &self.mir_map.map[&nid];
                             let sig = ty.fn_sig().skip_binder();
-                            let sig = monomorphize::apply_param_substs(self.tcx, substs, sig);
-                            {
-                                let mut ctxt = BinaryenFnCtxt {
-                                    tcx: self.tcx,
-                                    mir_map: self.mir_map,
-                                    mir: mir,
-                                    did: def_id,
-                                    sig: &sig,
-                                    module: self.module,
-                                    fun_types: &mut self.fun_types,
-                                    fun_names: &mut self.fun_names,
-                                    c_strings: &mut self.c_strings,
-                                };
+                            let mut call_kind = BinaryenCallKind::Direct;
 
-                                ctxt.trans();
+                            // extern wasm functions
+                            if "wasm::::print_i32" == self.tcx.item_path_str(def_id) {
+                                call_kind = BinaryenCallKind::Import;
+                                self.import_wasm_extern(def_id, sig);
+                            } else {
+                                let nid = self.tcx.map.as_local_node_id(def_id).expect("");
+                                let mir = &self.mir_map.map[&nid];
+                                let sig = monomorphize::apply_param_substs(self.tcx, substs, sig);
+                                {
+                                    let mut ctxt = BinaryenFnCtxt {
+                                        tcx: self.tcx,
+                                        mir_map: self.mir_map,
+                                        mir: mir,
+                                        did: def_id,
+                                        sig: &sig,
+                                        module: self.module,
+                                        fun_types: &mut self.fun_types,
+                                        fun_names: &mut self.fun_names,
+                                        fun_refs: &mut self.fun_refs,
+                                        c_strings: &mut self.c_strings,
+                                    };
+
+                                    ctxt.trans();
+                                }
                             }
 
                             let ret_ty = match sig.output {
                                 ty::FnOutput::FnConverging(ref t) => {
-                                    rust_ty_to_binaryen(t)
+                                    if !t.is_nil() {
+                                        rust_ty_to_binaryen(t)
+                                    } else {
+                                        BinaryenNone()
+                                    }
                                 }
                                 _ => panic!()
                             };
 
-                            Some((self.fun_names[&(def_id, sig)].as_ptr(), ret_ty))
+                            Some((self.fun_names[&(def_id, sig.clone())].as_ptr(), ret_ty, call_kind))
                         } else {
                             panic!();
                         }
@@ -463,6 +534,40 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 }
             }
             _ => panic!()
+        }
+    }
+
+    fn import_wasm_extern(&mut self, did: DefId, sig: &ty::FnSig<'tcx>) {
+        if self.fun_names.contains_key(&(did, sig.clone())) {
+            return;
+        }
+
+        // import print i32
+        let print_i32_name = CString::new("print_i32").expect("");
+        let print_i32 = print_i32_name.as_ptr();
+        self.fun_names.insert((did, sig.clone()), print_i32_name.clone());
+        self.c_strings.push(print_i32_name);
+
+        let spectest_module_name = CString::new("spectest").expect("");
+        let spectest_module = spectest_module_name.as_ptr();
+        self.c_strings.push(spectest_module_name);
+
+        let print_fn_name = CString::new("print").expect("");
+        let print_fn = print_fn_name.as_ptr();
+        self.c_strings.push(print_fn_name);
+
+        let print_i32_args = [BinaryenInt32()];
+        unsafe {
+            let print_i32_ty = BinaryenAddFunctionType(self.module,
+                                                       print_i32,
+                                                       BinaryenNone(),
+                                                       print_i32_args.as_ptr(),
+                                                       BinaryenIndex(1));
+            BinaryenAddImport(self.module,
+                              print_i32,
+                              spectest_module,
+                              print_fn,
+                              print_i32_ty);
         }
     }
 }

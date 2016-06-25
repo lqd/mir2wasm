@@ -1,4 +1,4 @@
-#![feature(intrinsics, lang_items, start, no_core, fundamental)]
+#![feature(intrinsics, lang_items, main, no_core, fundamental)]
 #![no_core]
 
 #[lang = "sized"]
@@ -18,11 +18,11 @@ pub trait PartialEq<Rhs: ?Sized = Self> {
     fn ne(&self, other: &Rhs) -> bool { !self.eq(other) }
 }
 
-impl PartialEq for isize {
+impl PartialEq for i32 {
     #[inline]
-    fn eq(&self, other: &isize) -> bool { (*self) == (*other) }
+    fn eq(&self, other: &i32) -> bool { (*self) == (*other) }
     #[inline]
-    fn ne(&self, other: &isize) -> bool { (*self) != (*other) }
+    fn ne(&self, other: &i32) -> bool { (*self) != (*other) }
 }
 
 #[lang = "add"]
@@ -31,9 +31,9 @@ pub trait Add<RHS = Self> {
     fn add(self, rhs: RHS) -> Self::Output;
 }
 
-impl Add for isize {
-    type Output = isize;
-    fn add(self, rhs: isize) -> Self::Output { self + rhs }
+impl Add for i32 {
+    type Output = i32;
+    fn add(self, rhs: i32) -> Self::Output { self + rhs }
 }
 
 #[lang = "sub"]
@@ -42,12 +42,22 @@ pub trait Sub<RHS=Self> {
     fn sub(self, rhs: RHS) -> Self::Output;
 }
 
-impl Sub for isize {
-    type Output = isize;
-    fn sub(self, rhs: isize) -> Self::Output { self - rhs }
+impl Sub for i32 {
+    type Output = i32;
+    fn sub(self, rhs: i32) -> Self::Output { self - rhs }
 }
 
-fn fibonacci_recursive(n: isize) -> isize {
+#[lang = "add_assign"]
+pub trait AddAssign<Rhs=Self> {
+    fn add_assign(&mut self, Rhs);
+}
+
+impl AddAssign for i32 {
+    #[inline]
+    fn add_assign(&mut self, other: i32) { *self += other }
+}
+
+fn fibonacci_recursive(n: i32) -> i32 {
     if n == 0 || n == 1 {
         n
     } else {
@@ -55,7 +65,41 @@ fn fibonacci_recursive(n: isize) -> isize {
     }
 }
 
-#[start]
-fn main(i: isize, _: *const *const u8) -> isize {
-    fibonacci_recursive(i)
+fn fibonacci_iterative(n: i32) -> i32 {
+    let mut current = 0;
+    let mut next = 1;
+
+    let mut iterator = 0;
+    loop {
+        if iterator == n {
+            break;
+        }
+
+        let tmp = current + next;
+        current = next;
+        next = tmp;
+
+        iterator += 1;
+    }
+
+    current
+}
+
+// access to the wasm "spectest" module test printing functions
+mod wasm {
+    extern {
+        pub fn print_i32(i: i32);
+    }
+}
+
+#[main]
+fn main() {
+    let result = fibonacci_recursive(10);
+    unsafe { wasm::print_i32(result); } // (i32.const 55)
+
+    let result = fibonacci_iterative(25);
+    unsafe { wasm::print_i32(result); } // (i32.const 75025)
+
+    let result = fibonacci_recursive(25);
+    unsafe { wasm::print_i32(result); } // a slower (i32.const 75025)
 }
