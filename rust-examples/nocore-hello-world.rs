@@ -36,8 +36,12 @@ extern "rust-intrinsic" { fn transmute<T, U>(t: T) -> U; }
 
 // access to the wasm "spectest" module test printing functions
 mod wasm {
+    pub fn print_i32(i: isize) {
+        unsafe { _print_i32(i); }
+    }
+
     extern {
-        pub fn print_i32(i: isize);
+        fn _print_i32(i: isize);
     }
 }
 
@@ -45,7 +49,7 @@ fn real_main() {
     let i = 1;
     let j = i + 2;
     let result = main(j, 0 as _);
-    unsafe { wasm::print_i32(result); } // (i32.const 6)
+    wasm::print_i32(result); // (i32.const 6)
 }
 
 #[start]
