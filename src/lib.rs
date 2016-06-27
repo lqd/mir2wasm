@@ -20,3 +20,4 @@ pub mod error;
 pub mod trans;
 mod binaryen;
 mod monomorphize;
+mod traits;

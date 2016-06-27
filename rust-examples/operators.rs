@@ -111,8 +111,12 @@ impl PartialEq for isize {
 
 // access to the wasm "spectest" module test printing functions
 mod wasm {
+    pub fn print_i32(i: isize) {
+        unsafe { _print_i32(i); }
+    }
+
     extern {
-        pub fn print_i32(i: isize);
+        fn _print_i32(i: isize);
     }
 }
 
@@ -125,7 +129,7 @@ fn test() {
     let j = i == 1;
 
     let result = main(i, 0 as _);
-    unsafe { wasm::print_i32(result); } // (i32.const 2)
+    wasm::print_i32(result); // (i32.const 2)
 }
 
 #[start]

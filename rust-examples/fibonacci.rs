@@ -87,19 +87,43 @@ fn fibonacci_iterative(n: i32) -> i32 {
 
 // access to the wasm "spectest" module test printing functions
 mod wasm {
+    pub fn print_i32(i: i32) {
+        unsafe { _print_i32(i); }
+    }
+
     extern {
-        pub fn print_i32(i: i32);
+        fn _print_i32(i: i32);
+    }
+}
+
+// Unusual example just to test trait methods
+trait Fibonacci {
+    fn fibonacci(&self) -> Self;
+}
+
+impl Fibonacci for i32 {
+    fn fibonacci(&self) -> i32 {
+        fibonacci_iterative(*self)
     }
 }
 
 #[main]
 fn main() {
     let result = fibonacci_recursive(10);
-    unsafe { wasm::print_i32(result); } // (i32.const 55)
+    wasm::print_i32(result); // (i32.const 55)
 
     let result = fibonacci_iterative(25);
-    unsafe { wasm::print_i32(result); } // (i32.const 75025)
+    wasm::print_i32(result); // (i32.const 75025)
 
     let result = fibonacci_recursive(25);
-    unsafe { wasm::print_i32(result); } // a slower (i32.const 75025)
+    wasm::print_i32(result); // a slower (i32.const 75025)
+
+    // trait example
+    let nth = 20;
+    let result = nth.fibonacci();
+    wasm::print_i32(result); // (i32.const 6765)
+
+    // the following two, however, create 'promoted' blocks, which are not yet implemented
+    // let result = Fibonacci::fibonacci(&10);
+    // let result = 10.fibonacci();
 }

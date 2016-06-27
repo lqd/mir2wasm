@@ -15,6 +15,7 @@ use std::ptr;
 use std::collections::HashMap;
 use binaryen::*;
 use monomorphize;
+use traits;
 
 pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                              mir_map: &MirMap<'tcx>,
@@ -252,36 +253,18 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             Some((ref lvalue, _)) => {
                                 let b_lvalue = self.trans_lval(lvalue);
 
-                                // TODO: simplify getting the locals' type
-                                let t = match *lvalue {
-                                    Lvalue::Var(i) => &self.mir.var_decls[i as usize].ty,
-                                    Lvalue::Temp(i) => &self.mir.temp_decls[i as usize].ty,
-                                    _ => panic!("unimplemented LValue Call destination")
-                                };
+                                if b_fnty == BinaryenNone() {
+                                    // The result of the Rust call is put in MIR into a tmp local,
+                                    // but the wasm function returns void (like the print externs)
+                                    // TODO: what representation should the unit type have in wasm ?
+                                    debug!("emitting {:?} Call to fn {:?} + SetLocal for unit type", call_kind, func);
+                                    binaryen_stmts.push(b_call);
 
-                                // TODO: file a bug for the ICE caused by changing the previous match to:
-                                // match *lvalue {
-                                //    lvalue::X(i) => i
-                                // }
-                                // -> error: internal compiler error: ../src/librustc/middle/mem_categorization.rs:1271:
-                                //     enum pattern didn't resolve to enum or struct None
-
-                                match t.sty {
-                                    ty::TyTuple(tuple) => {
-                                        if tuple.len() == 0 {
-                                            // TODO: what representation should the unit type have in wasm ?
-                                            debug!("emitting {:?} Call to fn {:?} + SetLocal for unit type", call_kind, func);
-                                            binaryen_stmts.push(b_call);
-                                            let unit_type = BinaryenConst(self.module, BinaryenLiteralInt32(0));
-                                            binaryen_stmts.push(BinaryenSetLocal(self.module, b_lvalue.0, unit_type));
-                                        } else {
-                                            panic!("unimplemented Tuple type");
-                                        }
-                                    }
-                                    _ => {
-                                        debug!("emitting {:?} Call to fn {:?} + SetLocal of the result", call_kind, func);
-                                        binaryen_stmts.push(BinaryenSetLocal(self.module, b_lvalue.0, b_call));
-                                    }
+                                    let unit_type = BinaryenConst(self.module, BinaryenLiteralInt32(0));
+                                    binaryen_stmts.push(BinaryenSetLocal(self.module, b_lvalue.0, unit_type));
+                                } else {
+                                    debug!("emitting {:?} Call to fn {:?} + SetLocal of the result", call_kind, func);
+                                    binaryen_stmts.push(BinaryenSetLocal(self.module, b_lvalue.0, b_call));
                                 }
                             }
                             _ => {
@@ -434,6 +417,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     };
                     Some(BinaryenBinary(self.module, op, a, b))
                 }
+                Rvalue::Ref( _, _, ref lvalue) => {
+                    // TODO: for shared refs, similar to Operand::Consume and could be shared
+                    let (i, _) = self.trans_lval(lvalue);
+                    let lval_ty = self.mir.lvalue_ty(*self.tcx, lvalue);
+                    let t = lval_ty.to_ty(*self.tcx);
+                    let t = rust_ty_to_binaryen(t);
+                    Some(BinaryenGetLocal(self.module, i, t))
+                }
                 _ => {
                     None
                 }
@@ -471,6 +462,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             _ => panic!("unimplemented value: {:?}", value)
                         }
                     }
+                    Literal::Promoted { .. } => {
+                        panic!("unimplemented Promoted literal: {:?}", c)
+                    }
                     _ => panic!("{:?}", c)
                 }
             }
@@ -486,23 +480,46 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         if ty.is_fn() {
                             assert!(def_id.is_local());
                             let sig = ty.fn_sig().skip_binder();
+
+                            let mut fn_did = def_id;
+                            let fn_name = self.tcx.item_path_str(fn_did);
+                            let fn_sig;
                             let mut call_kind = BinaryenCallKind::Direct;
 
-                            // extern wasm functions
-                            if "wasm::::print_i32" == self.tcx.item_path_str(def_id) {
+                            if fn_name == "wasm::::print_i32" || fn_name == "wasm::::_print_i32" {
+                                // extern wasm functions
+                                fn_sig = sig.clone();
                                 call_kind = BinaryenCallKind::Import;
-                                self.import_wasm_extern(def_id, sig);
+                                self.import_wasm_extern(fn_did, sig);
                             } else {
-                                let nid = self.tcx.map.as_local_node_id(def_id).expect("");
+                                let nid = self.tcx.map.as_local_node_id(fn_did).expect("");
+                                let (nid, substs, sig) = if self.mir_map.map.contains_key(&nid) {
+                                    (nid, *substs, sig)
+                                } else {
+                                    // only trait methods can have a Self parameter
+                                    if substs.self_ty().is_none() {
+                                        panic!("unimplemented fn trans: {:?}", fn_did);
+                                    }
+
+                                    let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.tcx, fn_did, substs);
+                                    let nid = self.tcx.map.as_local_node_id(resolved_def_id).expect("");
+                                    let ty = self.tcx.lookup_item_type(resolved_def_id).ty;
+                                    let sig = ty.fn_sig().skip_binder();
+
+                                    fn_did = resolved_def_id;
+                                    (nid, resolved_substs, sig)
+                                };
+
                                 let mir = &self.mir_map.map[&nid];
-                                let sig = monomorphize::apply_param_substs(self.tcx, substs, sig);
+
+                                fn_sig = monomorphize::apply_param_substs(self.tcx, substs, sig);
                                 {
                                     let mut ctxt = BinaryenFnCtxt {
                                         tcx: self.tcx,
                                         mir_map: self.mir_map,
                                         mir: mir,
-                                        did: def_id,
-                                        sig: &sig,
+                                        did: fn_did,
+                                        sig: &fn_sig,
                                         module: self.module,
                                         fun_types: &mut self.fun_types,
                                         fun_names: &mut self.fun_names,
@@ -514,7 +531,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 }
                             }
 
-                            let ret_ty = match sig.output {
+                            let ret_ty = match fn_sig.output {
                                 ty::FnOutput::FnConverging(ref t) => {
                                     if !t.is_nil() {
                                         rust_ty_to_binaryen(t)
@@ -525,7 +542,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 _ => panic!()
                             };
 
-                            Some((self.fun_names[&(def_id, sig.clone())].as_ptr(), ret_ty, call_kind))
+                            Some((self.fun_names[&(fn_did, fn_sig)].as_ptr(), ret_ty, call_kind))
                         } else {
                             panic!();
                         }
