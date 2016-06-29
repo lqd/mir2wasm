@@ -1,7 +1,13 @@
 #![feature(
+    custom_attribute,
+    link_args,
     question_mark,
     rustc_private,
 )]
+
+// FIXME: C++ static linkage hacks. How do you do this for real?!
+#[link_args = "-lstdc++ -static-libstdc++"]
+extern { }
 
 #[macro_use] extern crate rustc;
 extern crate rustc_mir;

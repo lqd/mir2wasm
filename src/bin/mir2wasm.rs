@@ -7,13 +7,13 @@ extern crate mir2wasm;
 extern crate rustc;
 extern crate rustc_driver;
 
-use mir2wasm::trans;
-use rustc::session::Session;
-use rustc_driver::{driver, CompilerCalls};
-
 // FIXME: C++ static linkage hacks. How do you do this for real?!
 #[link_args = "-lstdc++ -static-libstdc++"]
 extern { }
+
+use mir2wasm::trans;
+use rustc::session::Session;
+use rustc_driver::{driver, CompilerCalls};
 
 struct MiriCompilerCalls;
 
