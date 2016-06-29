@@ -1,4 +1,4 @@
-#![feature(intrinsics, lang_items, start, no_core, libc, fundamental)]
+#![feature(intrinsics, lang_items, start, no_core, libc, fundamental, custom_attribute)]
 #![no_core]
 
 #[lang = "sized"]
@@ -45,6 +45,9 @@ mod wasm {
     }
 }
 
+// This function will be run at Module start
+// e.g when using the interpreter
+#[wasm_start]
 fn real_main() {
     let i = 1;
     let j = i + 2;

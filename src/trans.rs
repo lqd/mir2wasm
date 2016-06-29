@@ -9,6 +9,7 @@ use rustc::hir::intravisit::{self, Visitor, FnKind};
 use rustc::hir::{FnDecl, Block};
 use rustc::hir::def_id::DefId;
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
+use syntax::attr::AttrMetaMethods;
 use syntax::codemap::Span;
 use std::ffi::CString;
 use std::ptr;
@@ -18,8 +19,7 @@ use monomorphize;
 use traits;
 
 pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
-                             mir_map: &MirMap<'tcx>,
-                             entry_fn: Option<NodeId>) -> Result<()> {
+                             mir_map: &MirMap<'tcx>) -> Result<()> {
 
     let _ignore = tcx.dep_graph.in_ignore();
 
@@ -29,32 +29,12 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         module: unsafe { BinaryenModuleCreate() },
         fun_types: HashMap::new(),
         fun_names: HashMap::new(),
-        fun_refs: HashMap::new(),
         c_strings: Vec::new(),
     };
 
     tcx.map.krate().visit_all_items(v);
 
     unsafe {
-        // export #[start] or #[main] entry fn when available
-        if let Some(entry_fn) = entry_fn {
-            let entry_fn_did = tcx.map.local_def_id(entry_fn);
-            for (&(did, ref sig), name) in &v.fun_names {
-                if entry_fn_did == did {
-                    debug!("emitting Export for entry fn {:?}", name);
-                    BinaryenAddExport(v.module, name.as_ptr(), name.as_ptr());
-
-                    let mir = mir_map.map.get(&entry_fn).expect("no mir for main function");
-                    if mir.arg_decls.len() == 0 {
-                        // we have a #[main] fn, set it as the module start method
-                        debug!("emitting SetStart for #[main] fn {:?}", name);
-                        let module_start_fn = v.fun_refs[&(did, sig.clone())];
-                        BinaryenSetStart(v.module, module_start_fn);
-                    }
-                }
-            }
-        }
-
         // TODO: validate the module
         // TODO: make it possible to print the optimized module
         BinaryenModulePrint(v.module);
@@ -69,7 +49,6 @@ struct BinaryenModuleCtxt<'v, 'tcx: 'v> {
     module: BinaryenModuleRef,
     fun_types: HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     fun_names: HashMap<(DefId, ty::FnSig<'tcx>), CString>,
-    fun_refs: HashMap<(DefId, ty::FnSig<'tcx>), BinaryenFunctionRef>,
     c_strings: Vec<CString>,
 }
 
@@ -103,7 +82,6 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
                 module: self.module,
                 fun_types: &mut self.fun_types,
                 fun_names: &mut self.fun_names,
-                fun_refs: &mut self.fun_refs,
                 c_strings: &mut self.c_strings,
             };
 
@@ -123,7 +101,6 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
     module: BinaryenModuleRef,
     fun_types: &'v mut HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     fun_names: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), CString>,
-    fun_refs: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), BinaryenFunctionRef>,
     c_strings: &'v mut Vec<CString>,
 }
 
@@ -363,7 +340,26 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                         locals.as_ptr(),
                                         BinaryenIndex(locals.len() as _),
                                         body);
-            self.fun_refs.insert((self.did, self.sig.clone()), f);
+
+            let nid = self.tcx.map.as_local_node_id(self.did).expect("");
+            let attrs = self.tcx.map.attrs(nid);
+
+            let wasm_export_fn = attrs.iter().filter(|&attr| "wasm_export" == attr.node.value.name()).count() > 0;
+            if wasm_export_fn {
+                debug!("emitting Export for fn {:?}", self.tcx.item_path_str(self.did));
+                BinaryenAddExport(self.module, fn_name_ptr, fn_name_ptr);
+            }
+
+            // TODO: there should be a compilation failure if more than one wasm start fn is found
+            let wasm_start_fn = attrs.iter().filter(|&attr| {
+                let name = attr.node.value.name();
+                name == "wasm_start" || name == "main"
+            }).count() > 0;
+
+            if wasm_start_fn {
+                debug!("emitting SetStart for fn {:?}", self.tcx.item_path_str(self.did));
+                BinaryenSetStart(self.module, f);
+            }
         }
 
         debug!("done translating fn {:?}\n", self.tcx.item_path_str(self.did));
@@ -523,7 +519,6 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                         module: self.module,
                                         fun_types: &mut self.fun_types,
                                         fun_names: &mut self.fun_names,
-                                        fun_refs: &mut self.fun_refs,
                                         c_strings: &mut self.c_strings,
                                     };
 

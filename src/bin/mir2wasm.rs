@@ -28,10 +28,7 @@ impl<'a> CompilerCalls<'a> for MiriCompilerCalls {
         control.after_analysis.stop = rustc_driver::Compilation::Stop;
         control.after_analysis.callback = Box::new(|state| {
             state.session.abort_if_errors();
-
-            let entry_fn = state.session.entry_fn.borrow();
-            let entry_fn = if let Some((node_id, _)) = *entry_fn { Some(node_id) } else { None };
-            trans::trans_crate(&state.tcx.unwrap(), state.mir_map.unwrap(), entry_fn)
+            trans::trans_crate(&state.tcx.unwrap(), state.mir_map.unwrap())
                 .unwrap(); // FIXME
         });
 
