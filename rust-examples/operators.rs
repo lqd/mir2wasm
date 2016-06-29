@@ -1,4 +1,4 @@
-#![feature(intrinsics, lang_items, start, no_core, libc, fundamental)]
+#![feature(intrinsics, lang_items, start, no_core, libc, fundamental, custom_attribute)]
 #![no_core]
 
 #[lang = "sized"]
@@ -120,6 +120,9 @@ mod wasm {
     }
 }
 
+// This function will be available to other Modules.
+// And can also be called by the interpreter at Module start (binaryen-shell -e test) 
+#[wasm_export]
 fn test() {
     let mut i = 0;
     i += 3;
