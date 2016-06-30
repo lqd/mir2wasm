@@ -1,4 +1,4 @@
-#![feature(intrinsics, lang_items, start, no_core, libc, fundamental, custom_attribute)]
+#![feature(intrinsics, lang_items, main, no_core, fundamental)]
 #![no_core]
 
 #[lang = "sized"]
@@ -120,10 +120,12 @@ mod wasm {
     }
 }
 
-// This function will be available to other Modules.
-// And can also be called by the interpreter at Module start (binaryen-shell -e test) 
-#[wasm_export]
-fn test() {
+fn test(i: isize) -> isize {
+    ((i + 3) * 2 - 2) / 3
+}
+
+#[main]
+fn main() {
     let mut i = 0;
     i += 3;
     i *= 4;
@@ -131,11 +133,6 @@ fn test() {
     i -= 1;
     let j = i == 1;
 
-    let result = main(i, 0 as _);
+    let result = test(i);
     wasm::print_i32(result); // (i32.const 2)
-}
-
-#[start]
-fn main(i: isize, _: *const *const u8) -> isize {
-    ((i + 3) * 2 - 2) / 3
 }
