@@ -5,9 +5,12 @@ use rustc::mir::mir_map::MirMap;
 use rustc::middle::const_val::ConstVal;
 use rustc_const_math::{ConstInt, ConstIsize};
 use rustc::ty::{self, TyCtxt, Ty, FnSig};
+use rustc::ty::layout::{Layout};
+use rustc::ty::subst::{self, Subst, Substs};
 use rustc::hir::intravisit::{self, Visitor, FnKind};
 use rustc::hir::{FnDecl, Block};
 use rustc::hir::def_id::DefId;
+use rustc::traits::{ProjectionMode};
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
 use syntax::attr::AttrMetaMethods;
 use syntax::codemap::Span;
@@ -37,7 +40,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
     unsafe {
         // TODO: validate the module
         // TODO: make it possible to print the optimized module
-        BinaryenModulePrint(v.module);
+        // BinaryenModulePrint(v.module);
     }
 
     Ok(())
@@ -184,12 +187,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             for stmt in &bb.statements {
                 match stmt.kind {
                     StatementKind::Assign(ref lval, ref rval) => {
-                        let (lval_i, _) = self.trans_lval(lval);
-                        if let Some(rval_expr) = self.trans_rval(rval) {
-                            debug!("emitting SetLocal for Assign '{:?} = {:?}'", lval, rval);
-                            let binaryen_stmt = unsafe { BinaryenSetLocal(self.module, lval_i, rval_expr) };
-                            binaryen_stmts.push(binaryen_stmt);
-                        }
+                        self.trans_assignment(lval, rval, &mut binaryen_stmts);
+
+                        // let (lval_i, _) = self.trans_lval(lval);
+                        // if let Some(rval_expr) = self.trans_rval(rval) {
+                        //     debug!("emitting SetLocal for Assign '{:?} = {:?}'", lval, rval);
+                        //     let binaryen_stmt = unsafe { BinaryenSetLocal(self.module, lval_i, rval_expr) };
+                        //     binaryen_stmts.push(binaryen_stmt);
+                        // }
                     }
                 }
             }
@@ -365,6 +370,108 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         debug!("done translating fn {:?}\n", self.tcx.item_path_str(self.did));
     }
 
+    fn trans_assignment(&mut self, lvalue: &Lvalue<'tcx>, rvalue: &Rvalue<'tcx>, statements: &mut Vec<BinaryenExpressionRef>) {
+        let (lvalue_index, _) = self.trans_lval(lvalue);
+        let dest_ty = self.lvalue_ty(lvalue);
+        let dest_layout = self.type_layout(dest_ty);
+
+        debug!("Assign {:?} -> dest_ty: {:?}, dest_layout: {:?}", lvalue, dest_ty, dest_layout);
+
+        /*
+        let (lval_i, _) = self.trans_lval(lval);
+        if let Some(rval_expr) = self.trans_rval(rval) {
+            debug!("emitting SetLocal for Assign '{:?} = {:?}'", lval, rval);
+            let binaryen_stmt = unsafe { BinaryenSetLocal(self.module, lval_i, rval_expr) };
+            binaryen_stmts.push(binaryen_stmt);
+        }
+        */
+
+        match *rvalue {
+            Rvalue::Use(ref operand) => {
+                let src = self.trans_operand(operand);
+                // self.move_(src, dest, dest_ty)?;
+                debug!("emitting SetLocal for Assign Use '{:?} = {:?}'", lvalue, rvalue);
+                let statement = unsafe { BinaryenSetLocal(self.module, lvalue_index, src) };
+                statements.push(statement);
+            }
+            Rvalue::BinaryOp(ref bin_op, ref left, ref right) => {
+                let left = self.trans_operand(left);
+                let right = self.trans_operand(right);
+
+                let op = match dest_ty.sty {
+                    ty::TyInt(IntTy::I32) => {
+                        match *bin_op {
+                            BinOp::Mul => BinaryenMulInt32(),
+                            _ => panic!("unimplemented BinOp, ty: {:?}, op: {:?}", dest_ty.sty, bin_op)
+                        }
+                    }
+
+                    _ => panic!("unimplemented Rvalue::BinaryOp, ty: {:?}, op: {:?}", dest_ty.sty, bin_op)
+                };
+
+                let statement = unsafe { BinaryenBinary(self.module, op, left, right) };
+                statements.push(statement);
+
+                
+                // panic!("unimplemented BinaryOp: {:?}", rvalue);
+                // // ignore overflow bit, rustc inserts check branches for us
+                // self.intrinsic_overflowing(bin_op, left, right, dest)?;
+                
+            }
+
+            Rvalue::Aggregate(ref kind, ref operands) => {
+                debug!("Rvalue::Aggregate kind: {:?}, operands: {:?}", kind, operands);
+                match *dest_layout {
+                    Layout::Univariant { ref variant, .. } => {
+                        // debug!("Rvalue::Aggregate to dest_layout variant {:?}", variant);
+                        // if let ty::layout::Struct { ref align, ..} = *variant {
+                            debug!("Rvalue::Aggregate to dest_layout variant {:?} / {:?}", variant.align.abi(), variant.align.pref());
+                        // }
+
+                        if operands.len() == 0 {
+                            // 'return = ()'
+                        } else {
+                            if let AggregateKind::Adt(ref adt_def, _, _) = *kind {
+                                // create the struct on the stack
+                                // assign its field by offsets
+                                // set_local of the address of the struct to the dst 
+                                let size = variant.min_size().abi_align(variant.align);
+                                debug!("Allocate this Adt on the linear memory: {:?} -> {:?}, YO: {:?}", adt_def, variant.min_size().bytes(), size.bytes());
+                            }
+
+
+                            use std::iter;
+                            let offsets = iter::once(0)
+                                .chain(variant.offset_after_field.iter().map(|s| s.bytes()));
+                            // panic!("unimplemented Rvalue::Aggregate to Layout::Univariant: '{:?} = {:?}, offsets: {:?}'", lvalue, rvalue, offsets.collect::<Vec<_>>())
+
+                            for (offset, operand) in offsets.into_iter().zip(operands) {
+                                debug!("looptydo offset: {:?} operand: {:?}", offset, self.trans_operand(operand));
+                                // let src = self.eval_operand(operand);
+                                // let src_ty = self.operand_ty(operand);
+                                // let field_dest = 0 + offset; //dest.offset(offset as isize);
+                                // // self.move_(src, field_dest, src_ty)?;
+                            }
+                        }
+
+                        // panic!("unimplemented Rvalue::Aggregate to Layout::Univariant: '{:?} = {:?}'", lvalue, rvalue)
+                        // use std::iter;
+                        // let offsets = iter::once(0)
+                        //     .chain(variant.offset_after_field.iter().map(|s| s.bytes()));
+                        // panic!("unimplemented Rvalue::Aggregate to Layout::Univariant: '{:?} = {:?}, offsets: {:?}'", lvalue, rvalue, offsets.collect::<Vec<_>>())
+                        // self.assign_fields(dest, offsets, operands)?;
+                    }
+
+                    _ => panic!("unimplemented Rvalue::Aggregate: {:?}", rvalue)
+                }
+            }
+
+            _ => {
+                panic!("unimplemented Rvalue: {:?}", rvalue);
+            }
+        }
+    }
+
     fn trans_lval(&mut self, lvalue: &Lvalue) -> (BinaryenIndex, u32) {
         let i = match *lvalue {
             Lvalue::Arg(i) => i,
@@ -415,11 +522,31 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 }
                 Rvalue::Ref( _, _, ref lvalue) => {
                     // TODO: for shared refs, similar to Operand::Consume and could be shared
+                    debug!("Rvalue::Ref {:?}", lvalue);
                     let (i, _) = self.trans_lval(lvalue);
                     let lval_ty = self.mir.lvalue_ty(*self.tcx, lvalue);
                     let t = lval_ty.to_ty(*self.tcx);
                     let t = rust_ty_to_binaryen(t);
                     Some(BinaryenGetLocal(self.module, i, t))
+                }
+                Rvalue::Aggregate (ref kind, ref operands) => {
+                    debug!("Aggregate kind: {:?} operands {:?}", kind, operands);
+
+                    if let AggregateKind::Adt(adt_def, variant, _) = *kind {
+                        debug!("Adt - adt_def: {:?} variant: {:?}", adt_def, variant);
+                        let discr_val = adt_def.variants[variant].disr_val.to_u64_unchecked();
+                        let discr_size = 666; //discr.size().bytes() as usize;
+                        debug!("discr_val: {:?} discr_size: {:?}", discr_val, discr_size);
+
+                        // self.memory.write_uint(dest, discr_val, discr_size)?;
+
+                        // let offsets = variants[variant].offset_after_field.iter()
+                        //     .map(|s| s.bytes());
+                        // self.assign_fields(dest, offsets, operands)?;
+                    }
+
+                    
+                    None
                 }
                 _ => {
                     None
@@ -465,6 +592,42 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 }
             }
         }
+    }
+
+    // pub fn apply_param_substs<'a, 'tcx,T>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
+    //                               param_substs: &Substs<'tcx>,
+    pub fn monomorphize(&self, ty: Ty<'tcx>, substs: &'tcx Substs<'tcx>) -> Ty<'tcx> {
+        let substituted = ty.subst(*self.tcx, substs);
+        self.tcx.normalize_associated_type(&substituted)
+    }
+
+    fn type_size(&self, ty: Ty<'tcx>) -> usize {
+        let substs = self.tcx.mk_substs(subst::Substs::empty());
+        self.type_size_with_substs(ty, substs)
+    }
+
+    fn type_size_with_substs(&self, ty: Ty<'tcx>, substs: &'tcx Substs<'tcx>) -> usize {
+        self.type_layout_with_substs(ty, substs).size(&self.tcx.data_layout).bytes() as usize
+    }
+
+    fn type_layout(&self, ty: Ty<'tcx>) -> &'tcx Layout {
+        let substs = self.tcx.mk_substs(subst::Substs::empty());
+        self.type_layout_with_substs(ty, substs)
+    }
+
+    fn type_layout_with_substs(&self, ty: Ty<'tcx>, substs: &'tcx Substs<'tcx>) -> &'tcx Layout {
+        // TODO(solson): Is this inefficient? Needs investigation.
+        let ty = self.monomorphize(ty, substs);
+
+        self.tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+            // TODO(solson): Report this error properly.
+            ty.layout(&infcx).unwrap()
+        })
+    }
+
+    fn lvalue_ty(&self, lvalue: &Lvalue<'tcx>) -> Ty<'tcx> {
+        let substs = self.tcx.mk_substs(subst::Substs::empty());
+        self.monomorphize(self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx), substs)
     }
 
     fn trans_fn_name_direct(&mut self, operand: &Operand<'tcx>) -> Option<(*const c_char, BinaryenType, BinaryenCallKind)> {
