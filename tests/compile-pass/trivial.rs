@@ -1,12 +1,7 @@
-#![allow(dead_code)]
-#![no_std]
+#![feature(lang_items, no_core)]
 #![no_core]
 
-fn empty() {}
-
-fn unit_var() {
-    let x = ();
-    x
-}
+#[lang="sized"]
+trait Sized {}
 
 fn main() {}

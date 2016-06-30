@@ -1,7 +1,8 @@
 extern crate compiletest_rs as compiletest;
 
+use std::fs::File;
+use std::io::{Read, Write};
 use std::path::{PathBuf, Path};
-use std::io::Write;
 
 #[test] #[ignore]
 fn compile_fail() {
@@ -20,15 +21,31 @@ fn compile_fail() {
     });
 }
 
+fn should_ignore(filename: &Path) -> bool {
+    let mut file = File::open(filename).expect("could not open file");
+    let mut source = String::new();
+
+    file.read_to_string(&mut source).expect("could not read file");
+
+    return source.contains("xfail")
+}
+
 #[test]
 fn compile_pass() {
     let sysroot = find_sysroot();
     for_all_targets(&sysroot, |target| {
+        let (mut pass, mut fail, mut ignored) = (0, 0, 0);
+
         for file in std::fs::read_dir("tests/compile-pass").unwrap() {
             let file = file.unwrap();
             let path = file.path();
 
             if !file.metadata().unwrap().is_file() || !path.to_str().unwrap().ends_with(".rs") {
+                continue;
+            }
+
+            if should_ignore(&path) {
+                ignored += 1;
                 continue;
             }
 
@@ -43,21 +60,29 @@ fn compile_pass() {
             cmd.env(compiletest::procsrv::dylib_env_var(), paths);
 
             match cmd.output() {
-                Ok(ref output) if output.status.success() => writeln!(stderr.lock(), "ok").unwrap(),
+                Ok(ref output) if output.status.success() => {
+                    writeln!(stderr.lock(), "ok").unwrap();
+                    pass += 1;
+                }
                 Ok(output) => {
                     writeln!(stderr.lock(), "FAILED with exit code {:?}", output.status.code()).unwrap();
                     writeln!(stderr.lock(), "stdout: \n {}", std::str::from_utf8(&output.stdout).unwrap()).unwrap();
                     writeln!(stderr.lock(), "stderr: \n {}", std::str::from_utf8(&output.stderr).unwrap()).unwrap();
-                    panic!("some tests failed");
+                    fail += 1;
                 }
                 Err(e) => {
                     writeln!(stderr.lock(), "FAILED: {}", e).unwrap();
-                    panic!("some tests failed");
+                    fail += 1;
                 },
             }
         }
         let stderr = std::io::stderr();
-        writeln!(stderr.lock(), "").unwrap();
+        writeln!(stderr.lock(),
+                 "[compile-pass] {} passed; {} failed; {} ignored",
+                 pass, fail, ignored).unwrap();
+        if fail > 0 {
+            panic!("some compile-pass tests failed")
+        }
     });
 }
 

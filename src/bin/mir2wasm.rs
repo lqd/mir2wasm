@@ -14,6 +14,7 @@ extern { }
 use mir2wasm::trans;
 use rustc::session::Session;
 use rustc_driver::{driver, CompilerCalls};
+use std::process;
 
 struct MiriCompilerCalls;
 
@@ -42,5 +43,8 @@ fn main() {
 
     let mut args: Vec<String> = std::env::args().collect();
     args.push("--target=arm-unknown-linux-gnueabi".to_string());
-    rustc_driver::run_compiler(&args, &mut MiriCompilerCalls);
+    match rustc_driver::run_compiler(&args, &mut MiriCompilerCalls) {
+        (Ok(_), _) => process::exit(0),
+        (Err(code), _) => process::exit(code as i32)
+    }
 }
