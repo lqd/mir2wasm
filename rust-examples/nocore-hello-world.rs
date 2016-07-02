@@ -1,4 +1,4 @@
-#![feature(intrinsics, lang_items, start, no_core, libc, fundamental, custom_attribute)]
+#![feature(intrinsics, lang_items, start, no_core, libc, fundamental)]
 #![no_core]
 
 #[lang = "sized"]
@@ -45,14 +45,10 @@ mod wasm {
     }
 }
 
-// This function will be run at Module start
-// e.g when using the interpreter
-#[wasm_start]
-fn real_main() {
+fn real_main() -> isize {
     let i = 1;
     let j = i + 2;
-    let result = main(j, 0 as _);
-    wasm::print_i32(result); // (i32.const 6)
+    j
 }
 
 #[start]
@@ -61,5 +57,8 @@ fn main(i: isize, _: *const *const u8) -> isize {
         let (ptr, _): (*const u8, usize) = transmute("Hello!\0");
         puts(ptr);
 }*/
-    return i + 3;
+
+    let result = real_main() + 3;
+    wasm::print_i32(result); // (i32.const 6)
+    result
 }

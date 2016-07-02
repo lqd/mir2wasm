@@ -38,9 +38,20 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
     tcx.map.krate().visit_all_items(v);
 
     unsafe {
-        // TODO: validate the module
-        // TODO: make it possible to print the optimized module
+        // TODO: add CLI options to optimize the module: -O ? --release ? or optimize it always ?
+        // TODO: check which of the optimization passes we want aren't on by default here.
+        //       eg, removing unused functions and imports, minification, etc
+        // BinaryenModuleOptimize(v.module);
+
+        assert!(BinaryenModuleValidate(v.module) == 1, "Internal compiler error: invalid generated module");
+
         BinaryenModulePrint(v.module);
+
+        // TODO: add CLI option to launch the interpreter: --run ?
+        // BinaryenModuleInterpret(v.module);
+
+        // TODO: add CLI option to save the module to a specified file: -o ?
+        // BinaryenModuleWrite(v.module, ...)
     }
 
     Ok(())
@@ -164,11 +175,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             locals.push(binaryen_ret);
         }
 
-        // stack pointer
+        // Function prologue: stack pointer
         locals.push(BinaryenInt32());
         let stack_pointer_local = BinaryenIndex(locals.len() as _);
 
-        // reelooper helper for irreducible control flow
+        // relooper helper for irreducible control flow
         locals.push(BinaryenInt32());
         let relooper_local = BinaryenIndex(locals.len() as _);
 
@@ -182,14 +193,6 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
         let mut relooper_blocks = Vec::new();
 
-        // Create the function prologue
-        unsafe {
-            let read_sp = BinaryenLoad(self.module, 4, 0, 0, 0, BinaryenInt32(), BinaryenConst(self.module, BinaryenLiteralInt32(0)));
-            let copy_sp = BinaryenSetLocal(self.module, stack_pointer_local, read_sp);
-            let relooper_block = RelooperAddBlock(relooper, copy_sp);
-            relooper_blocks.push(relooper_block);
-        }
-
         debug!("{} MIR basic blocks to translate", self.mir.basic_blocks.len());
 
         for (i, bb) in self.mir.basic_blocks.iter().enumerate() {
@@ -200,14 +203,6 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 match stmt.kind {
                     StatementKind::Assign(ref lvalue, ref rvalue) => {
                         self.trans_assignment(lvalue, rvalue, &mut binaryen_stmts);
-                        // let (lvalue_idx, _) = self.trans_lval(lvalue);
-                        // let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
-
-                        // if let Some(rvalue_expr) = self.trans_rval(rvalue, &dest_ty) {
-                        //     debug!("emitting SetLocal for Assign '{:?} = {:?}'", lvalue, rvalue);
-                        //     let binaryen_stmt = unsafe { BinaryenSetLocal(self.module, lvalue_idx, rvalue_expr) };
-                        //     binaryen_stmts.push(binaryen_stmt);
-                        // }
                     }
                 }
             }
@@ -218,9 +213,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             match bb.terminator().kind {
                 TerminatorKind::Return => {
                     // Emit function epilogue:
+                    // TODO: like the prologue, not always necessary
                     unsafe {
+                        let sp = BinaryenConst(self.module, BinaryenLiteralInt32(0));
                         let read_original_sp = BinaryenGetLocal(self.module, stack_pointer_local, BinaryenInt32());
-                        let restore_original_sp = BinaryenStore(self.module, 4, 0, 0, BinaryenConst(self.module, BinaryenLiteralInt32(0)), read_original_sp);
+                        let restore_original_sp = BinaryenStore(self.module, 4, 0, 0, sp, read_original_sp);
                         binaryen_stmts.push(restore_original_sp);
                     }
 
@@ -253,12 +250,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                         match *destination {
                             Some((ref lvalue, _)) => {
-                                // let b_lvalue = self.trans_lval(lvalue);
-
-                                let (lvalue_index, lvalue_offset, lvalue_expr) = self.trans_lval(lvalue);
-                                if lvalue_expr.is_some() {
-                                    panic!("123");
-                                }
+                                let (lvalue_index, _) = self.trans_lval(lvalue);
 
                                 if b_fnty == BinaryenNone() {
                                     // The result of the Rust call is put in MIR into a tmp local,
@@ -361,7 +353,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 self.fun_types.insert(self.sig.clone(), ty);
             }
 
-            // Set up function prologue block
+            // Create the function prologue
+            // TODO: the epilogue and prologue are not always necessary
+            let read_sp = BinaryenLoad(self.module, 4, 0, 0, 0, BinaryenInt32(),
+                                       BinaryenConst(self.module, BinaryenLiteralInt32(0)));
+            let copy_sp = BinaryenSetLocal(self.module, stack_pointer_local, read_sp);
+            let prologue = RelooperAddBlock(relooper, copy_sp);
+            relooper_blocks.insert(0, prologue);
+
             if relooper_blocks.len() > 1 {
                 RelooperAddBranch(relooper_blocks[0], relooper_blocks[1],
                                   BinaryenExpressionRef(ptr::null_mut()),
@@ -381,12 +380,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             let nid = self.tcx.map.as_local_node_id(self.did).expect("");
             let attrs = self.tcx.map.attrs(nid);
 
-            // let wasm_export_fn = attrs.iter().filter(|&attr| "wasm_export" == attr.node.value.name()).count() > 0;
-            // if wasm_export_fn {
-            //     debug!("emitting Export for fn {:?}", self.tcx.item_path_str(self.did));
-            //     BinaryenAddExport(self.module, fn_name_ptr, fn_name_ptr);
-            // }
-
+            // Look for the entry fns attributes, and call them from the generated runtime start fn
             for attr in attrs {
                 let name = attr.node.value.name().to_string();
                 if name == "start" || name == "main" {
@@ -395,32 +389,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     BinaryenSetStart(self.module, wasm_start);
                 }
             }
-
-            // // TODO: there should be a compilation failure if more than one wasm start fn is found
-            // let wasm_start_fn = attrs.iter().filter(|&attr| {
-            //     let name = attr.node.value.name();
-            //     name == "wasm_start" || name == "main"
-            // }).count() > 0;
-
-            // if wasm_start_fn {
-            //     debug!("emitting SetStart for fn {:?}", self.tcx.item_path_str(self.did));
-            //     BinaryenSetStart(self.module, f);
-            // }
         }
 
         debug!("done translating fn {:?}\n", self.tcx.item_path_str(self.did));
     }
 
     fn trans_assignment(&mut self, lvalue: &Lvalue<'tcx>, rvalue: &Rvalue<'tcx>, statements: &mut Vec<BinaryenExpressionRef>) {
-        // debug!("trans_assignment '{:?} = {:?}'", lvalue, rvalue);
-
-        let (lvalue_index, lvalue_offset, lvalue_expr) = self.trans_lval(lvalue);
+        let (lvalue_index, lvalue_offset) = self.trans_lval(lvalue);
         let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
-
-        // tmp
-        if lvalue_expr.is_some() {
-            panic!("trans_assignment lvalue_expr {:?}", lvalue_expr);
-        }
 
         match *rvalue {
             Rvalue::Use(ref operand) => {
@@ -431,13 +407,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         Some(offset) => {
                             debug!("emitting Store + GetLocal for Assign Use '{:?} = {:?}'", lvalue, rvalue);
                             let ptr = BinaryenGetLocal(self.module, lvalue_index, rust_ty_to_binaryen(dest_ty));
-                            // TODO: match the dest_ty to see how many bytes to write
+                            // TODO: match on the dest_ty to know how many bytes to write, not just i32s
                             BinaryenStore(self.module, 4, offset * 8, 0, ptr, src)
                         }
                         None => {
                             debug!("emitting SetLocal for Assign Use '{:?} = {:?}'", lvalue, rvalue);
                             BinaryenSetLocal(self.module, lvalue_index, src)
-                        }                        
+                        }
                     };
                     statements.push(statement);
                 }
@@ -448,7 +424,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 let right = self.trans_operand(right);
 
                 unsafe {
-                    // TODO: implement binary ops for other types than just i32s
+                    // TODO: match on dest_ty.sty to implement binary ops for other types than just i32s
                     let op = match *op {
                         BinOp::Add => BinaryenAddInt32(),
                         BinOp::Sub => BinaryenSubInt32(),
@@ -467,11 +443,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
             Rvalue::Ref( _, _, ref lvalue) => {
                 // TODO: for shared refs only ?
-                // tmp
-                // panic!("Rvalue::Ref {:?}", lvalue);
-
+                // TODO: works for refs to "our stack", but not the locals on the wasm stack yet
                 let expr = self.trans_operand(&Operand::Consume(lvalue.clone()));
-                statements.push(expr);
+                unsafe {
+                    debug!("emitting SetLocal for Assign Ref '{:?} = {:?}'", lvalue, rvalue);
+                    let expr = BinaryenSetLocal(self.module, lvalue_index, expr);
+                    statements.push(expr);
+                }
             }
 
             Rvalue::Aggregate (ref kind, ref operands) => {
@@ -485,6 +463,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         match *dest_layout {
                             Layout::Univariant { ref variant, .. } => {
                                 // NOTE: use the variant's min_size and alignment for dest_size ?
+                                // TODO: extract the following into the Memory abstraction as well
                                 unsafe {
                                     // alloca
                                     debug!("allocating struct {:?} in linear memory, size: {:?} bytes ", adt_def, dest_size);
@@ -493,31 +472,31 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     let read_sp = BinaryenLoad(self.module, 4, 0, 0, 0, BinaryenInt32(), sp);
 
                                     let dest_size = BinaryenConst(self.module, BinaryenLiteralInt32(dest_size));
-                                    let decr_sp = BinaryenBinary(self.module, BinaryenSubInt32(), read_sp, dest_size); 
+                                    let decr_sp = BinaryenBinary(self.module, BinaryenSubInt32(), read_sp, dest_size);
                                     let write_sp = BinaryenStore(self.module, 4, 0, 0, sp, decr_sp);
                                     let write_local = BinaryenSetLocal(self.module, lvalue_index, write_sp);
-
                                     statements.push(write_local);
 
                                     // set fields
                                     let offsets = ::std::iter::once(0).chain(variant.offset_after_field.iter().map(|s| s.bytes()));
                                     for (offset, operand) in offsets.into_iter().zip(operands) {
                                         // let operand_ty = self.mir.operand_ty(*self.tcx, operand);
-                                        // TODO: match on the operand_ty to know how much bytes to store
+                                        // TODO: match on the operand_ty to know how many bytes to store, not just i32s
 
                                         let src = self.trans_operand(operand);
                                         let write_field = BinaryenStore(self.module, 4, offset as u32 * 8, 0, read_sp, src);
                                         debug!("emitting Store field, offset {:?}, value '{:?}'", offset * 8, operand);
-                                        statements.push(write_field);                                
+                                        statements.push(write_field);
                                     }
                                 }
                             }
                             _ => panic!("unimplemented Assign Aggregate Adt {:?} on Layout {:?}", adt_def, dest_layout)
-                        }                        
+                        }
                     }
 
                     AggregateKind::Tuple => {
                         if operands.len() == 0 {
+                            // TODO: in general, have a consistent strategy to handle the unit type assigns/returns
                             debug!("ignoring Assign '{:?} = {:?}'", lvalue, rvalue);
                         } else {
                             panic!("unimplemented Assign '{:?} = {:?}'", lvalue, rvalue);
@@ -532,7 +511,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         }
     }
 
-    fn trans_lval(&mut self, lvalue: &Lvalue<'tcx>) -> (BinaryenIndex, Option<u32>, Option<BinaryenExpressionRef>) {
+    fn trans_lval(&mut self, lvalue: &Lvalue<'tcx>) -> (BinaryenIndex, Option<u32>) {
         let i = match *lvalue {
             Lvalue::Arg(i) => i,
             Lvalue::Var(i) => self.mir.arg_decls.len() as u32 + i,
@@ -546,44 +525,17 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     self.mir.temp_decls.len() as u32
             }
             Lvalue::Projection(ref projection) => {
-                let (base, offset, projection_expr) = self.trans_lval(&projection.base);
+                let (base, offset) = self.trans_lval(&projection.base);
                 let base_ty = self.mir.lvalue_ty(*self.tcx, &projection.base).to_ty(*self.tcx);
 
-                // tmp
-                // if projection_expr.is_some() {
-                //     debug!("ELEM: {:?}", projection.elem);
-                //     println!("----- EXPRESSION INCOMING");
-                //     unsafe { BinaryenExpressionPrint(projection_expr.unwrap()); }
-                //     println!("-----");
-                //     panic!("trans_operand expr {:?}", projection_expr);
-                // }
-
-                // Those substs should probably be collected for the whole frame, like miri does
+                // TODO: Actually, those substs should probably be collected for the whole frame, like miri does
                 let substs = self.tcx.mk_substs(Substs::empty());
                 let base_layout = self.type_layout_with_substs(base_ty, substs);
 
                 match projection.elem {
                     ProjectionElem::Deref => {
                         if offset.is_none() {
-                            unsafe {
-                                debug!("emitting GetLocal + Load to Deref '{:?}'", lvalue);
-
-                                let ptr = BinaryenGetLocal(self.module, base, rust_ty_to_binaryen(base_ty));
-                                // TODO: match the base_ty, and see how many bytes to read
-                                let expr = BinaryenLoad(self.module, 4, 0, 0, 0, BinaryenInt32(), ptr);
-                                // panic!("trans_lval DONE - DEREF {:?} - {:?}", lvalue, base.0);
-
-                                if projection_expr.is_some() {
-                                    println!("----- EXPRESSION INCOMING");
-                                    BinaryenExpressionPrint(projection_expr.unwrap());
-                                    println!("-----");
-                                    BinaryenExpressionPrint(expr);
-                                    println!("-----");
-                                    panic!("");
-                                }
-
-                                return (base, None, Some(expr));
-                            }                            
+                            return (base, None);
                         }
                         panic!("unimplemented Deref {:?}", lvalue);
                     }
@@ -592,19 +544,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             Layout::Univariant { ref variant, .. } => variant,
                             _ => panic!("unimplemented Field Projection: {:?}", projection)
                         };
-                        
-                        if projection_expr.is_some() {
-                            debug!("ELEM: {:?}", projection.elem);
-                            // println!("----- EXPRESSION INCOMING");
-                            // unsafe { BinaryenExpressionPrint(projection_expr.unwrap()); }
-                            // println!("-----");
-                            // panic!("");
-                        }
 
                         let offset = variant.field_offset(field.index()).bytes();
-                        // debug!("trans_lval DONE - DEREF {:?} OFFSET: {:?}", lvalue, offset);
-                        return (base, Some(offset as u32), None);
-                        // return (base, Some(offset as u32), projection_expr);
+                        return (base, Some(offset as u32));
                     }
                     _ => panic!("unimplemented Projection: {:?}", projection)
                 }
@@ -612,53 +554,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             _ => panic!("unimplemented Lvalue: {:?}", lvalue)
         };
 
-        // debug!("trans_lval DONE {:?}", i);
-        (BinaryenIndex(i), None, None)
+        (BinaryenIndex(i), None)
     }
 
-    // fn trans_rval(&mut self, rvalue: &Rvalue<'tcx>, dest_ty: &'tcx TyS<'tcx>) -> Option<BinaryenExpressionRef> {
-    //     unsafe {
-    //         match *rvalue {
-    //             Rvalue::Use(ref operand) => {
-    //                 Some(self.trans_operand(operand))
-    //             }
-    //             Rvalue::BinaryOp(ref op, ref left, ref right) => {
-    //                 let left = self.trans_operand(left);
-    //                 let right = self.trans_operand(right);
-    //                 // TODO: implement binary ops for other types than just i32s
-    //                 let op = match *op {
-    //                     BinOp::Add => BinaryenAddInt32(),
-    //                     BinOp::Sub => BinaryenSubInt32(),
-    //                     BinOp::Mul => BinaryenMulInt32(),
-    //                     BinOp::Div => BinaryenDivSInt32(),
-    //                     BinOp::Eq => BinaryenEqInt32(),
-    //                     BinOp::Ne => BinaryenNeInt32(),
-    //                     _ => panic!("unimplemented BinOp: {:?}", op)
-    //                 };
-    //                 Some(BinaryenBinary(self.module, op, left, right))
-    //             }
-    //             Rvalue::Ref( _, _, ref lvalue) => {
-    //                 // TODO: for shared refs, similar to Operand::Consume and could be shared
-    //                 debug!("Rvalue::Ref {:?}", lvalue);
-    //                 let (i, _) = self.trans_lval(lvalue);
-    //                 let lval_ty = self.mir.lvalue_ty(*self.tcx, lvalue);
-    //                 let t = lval_ty.to_ty(*self.tcx);
-    //                 let t = rust_ty_to_binaryen(t);
-    //                 Some(BinaryenGetLocal(self.module, i, t))
-    //             }
-    //             _ => {
-    //                 None
-    //             }
-    //         }
-    //     }
-    // }
-
     fn trans_operand(&mut self, operand: &Operand<'tcx>) -> BinaryenExpressionRef {
-        // debug!("trans_operand: {:?}", operand);
         match *operand {
             Operand::Consume(ref lvalue) => {
-                // debug!("Operand::Consume lvalue: {:?}", lvalue);
-                let (index, offset, expr) = self.trans_lval(lvalue);
+                let (index, offset) = self.trans_lval(lvalue);
                 let lval_ty = self.mir.lvalue_ty(*self.tcx, lvalue);
                 let t = lval_ty.to_ty(*self.tcx);
                 let t = rust_ty_to_binaryen(t);
@@ -667,36 +569,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     match offset {
                         Some(offset) => {
                             debug!("emitting GetLocal + Load for '{:?}'", lvalue);
-                            // let ptr = if expr.is_none() { BinaryenGetLocal(self.module, index, t) } else { expr.unwrap() };
                             let ptr = BinaryenGetLocal(self.module, index, t);
-
-                            // TODO: match the field ty, and see how many bytes to read
-                            let x = BinaryenLoad(self.module, 4, 0, offset * 8, 0, BinaryenInt32(), ptr);
-
-                            // tmp
-                            if expr.is_some() {
-                                println!("----- EXPRESSION INCOMING");
-                                BinaryenExpressionPrint(expr.unwrap());
-                                println!("-----");
-                                BinaryenExpressionPrint(x);
-                                panic!("");
-                            }
-
-                            x
+                            // TODO: match on the field ty to know how many bytes to read, not just i32s
+                            BinaryenLoad(self.module, 4, 0, offset * 8, 0, BinaryenInt32(), ptr)
                         }
                         None => {
-                            debug!("emitting GetLocal for '{:?}'", lvalue);
-                            let x = BinaryenGetLocal(self.module, index, t);
-
-                            if expr.is_some() {
-                                println!("----- EXPRESSION INCOMING");
-                                BinaryenExpressionPrint(expr.unwrap());
-                                println!("-----");
-                                BinaryenExpressionPrint(x);
-                                panic!("");
-                            }
-
-                            x
+                            // debug!("emitting GetLocal for '{:?}'", lvalue);
+                            BinaryenGetLocal(self.module, index, t)
                         }
                     }
                 }
@@ -704,11 +583,20 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             Operand::Constant(ref c) => {
                 match c.literal {
                     Literal::Value { ref value } => {
+                        // TODO: handle more Rust types here, and cleanup the match
+                        //       to return a single BinaryenLiteral if possible
                         match *value {
                             ConstVal::Integral(ConstInt::Isize(ConstIsize::Is32(val))) |
                             ConstVal::Integral(ConstInt::I32(val)) => {
                                 unsafe {
                                     let lit = BinaryenLiteralInt32(val);
+                                    BinaryenConst(self.module, lit)
+                                }
+                            }
+                            ConstVal::Integral(ConstInt::Isize(ConstIsize::Is64(val))) |
+                            ConstVal::Integral(ConstInt::I64(val)) => {
+                                unsafe {
+                                    let lit = BinaryenLiteralInt64(val);
                                     BinaryenConst(self.module, lit)
                                 }
                             }
@@ -731,28 +619,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         }
     }
 
-    // pub fn monomorphize(&self, ty: Ty<'tcx>, substs: &'tcx Substs<'tcx>) -> Ty<'tcx> {
-    //     let substituted = ty.subst(*self.tcx, substs);
-    //     self.tcx.normalize_associated_type(&substituted)
-    // }
-
-    // fn type_size(&self, ty: Ty<'tcx>) -> usize {
-    //     let substs = self.tcx.mk_substs(subst::Substs::empty());
-    //     self.type_size_with_substs(ty, substs)
-    // }
-
+    // Imported from miri
     fn type_size_with_substs(&self, ty: Ty<'tcx>, substs: &'tcx Substs<'tcx>) -> usize {
         self.type_layout_with_substs(ty, substs).size(&self.tcx.data_layout).bytes() as usize
     }
 
-    // fn type_layout(&self, ty: Ty<'tcx>) -> &'tcx Layout {
-    //     let substs = self.tcx.mk_substs(subst::Substs::empty());
-    //     self.type_layout_with_substs(ty, substs)
-    // }
-
+    // Imported from miri and slightly modified to adapt to our monomorphize api
     fn type_layout_with_substs(&self, ty: Ty<'tcx>, substs: &'tcx Substs<'tcx>) -> &'tcx Layout {
         // TODO(solson): Is this inefficient? Needs investigation.
-        // NOTE(lqd): slightly modified from miri
         let ty = monomorphize::apply_ty_substs(self.tcx, substs, ty);
 
         self.tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
@@ -760,11 +634,6 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             ty.layout(&infcx).unwrap()
         })
     }
-
-    // fn lvalue_ty(&self, lvalue: &Lvalue<'tcx>) -> Ty<'tcx> {
-    //     let substs = self.tcx.mk_substs(subst::Substs::empty());
-    //     self.monomorphize(self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx), substs)
-    // }
 
     fn trans_fn_name_direct(&mut self, operand: &Operand<'tcx>) -> Option<(*const c_char, BinaryenType, BinaryenCallKind)> {
         match *operand {
@@ -781,47 +650,50 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             let fn_sig;
                             let mut call_kind = BinaryenCallKind::Direct;
 
-                            if fn_name == "wasm::::print_i32" || fn_name == "wasm::::_print_i32" {
-                                // extern wasm functions
-                                fn_sig = sig.clone();
-                                call_kind = BinaryenCallKind::Import;
-                                self.import_wasm_extern(fn_did, sig);
-                            } else {
-                                let nid = self.tcx.map.as_local_node_id(fn_did).expect("");
-                                let (nid, substs, sig) = if self.mir_map.map.contains_key(&nid) {
-                                    (nid, *substs, sig)
-                                } else {
-                                    // only trait methods can have a Self parameter
-                                    if substs.self_ty().is_none() {
-                                        panic!("unimplemented fn trans: {:?}", fn_did);
-                                    }
+                            match fn_name.as_ref() {
+                                "wasm::::print_i32" | "wasm::::_print_i32" => {
+                                    // extern wasm functions
+                                    fn_sig = sig.clone();
+                                    call_kind = BinaryenCallKind::Import;
+                                    self.import_wasm_extern(fn_did, sig);
+                                }
+                                _ => {
+                                    let nid = self.tcx.map.as_local_node_id(fn_did).expect("");
+                                    let (nid, substs, sig) = if self.mir_map.map.contains_key(&nid) {
+                                        (nid, *substs, sig)
+                                    } else {
+                                        // only trait methods can have a Self parameter
+                                        if substs.self_ty().is_none() {
+                                            panic!("unimplemented fn trans: {:?}", fn_did);
+                                        }
 
-                                    let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.tcx, fn_did, substs);
-                                    let nid = self.tcx.map.as_local_node_id(resolved_def_id).expect("");
-                                    let ty = self.tcx.lookup_item_type(resolved_def_id).ty;
-                                    let sig = ty.fn_sig().skip_binder();
+                                        let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.tcx, fn_did, substs);
+                                        let nid = self.tcx.map.as_local_node_id(resolved_def_id).expect("");
+                                        let ty = self.tcx.lookup_item_type(resolved_def_id).ty;
+                                        let sig = ty.fn_sig().skip_binder();
 
-                                    fn_did = resolved_def_id;
-                                    (nid, resolved_substs, sig)
-                                };
-
-                                let mir = &self.mir_map.map[&nid];
-
-                                fn_sig = monomorphize::apply_param_substs(self.tcx, substs, sig);
-                                {
-                                    let mut ctxt = BinaryenFnCtxt {
-                                        tcx: self.tcx,
-                                        mir_map: self.mir_map,
-                                        mir: mir,
-                                        did: fn_did,
-                                        sig: &fn_sig,
-                                        module: self.module,
-                                        fun_types: &mut self.fun_types,
-                                        fun_names: &mut self.fun_names,
-                                        c_strings: &mut self.c_strings,
+                                        fn_did = resolved_def_id;
+                                        (nid, resolved_substs, sig)
                                     };
 
-                                    ctxt.trans();
+                                    let mir = &self.mir_map.map[&nid];
+
+                                    fn_sig = monomorphize::apply_param_substs(self.tcx, substs, sig);
+                                    {
+                                        let mut ctxt = BinaryenFnCtxt {
+                                            tcx: self.tcx,
+                                            mir_map: self.mir_map,
+                                            mir: mir,
+                                            did: fn_did,
+                                            sig: &fn_sig,
+                                            module: self.module,
+                                            fun_types: &mut self.fun_types,
+                                            fun_names: &mut self.fun_names,
+                                            c_strings: &mut self.c_strings,
+                                        };
+
+                                        ctxt.trans();
+                                    }
                                 }
                             }
 
@@ -866,10 +738,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
             let mut statements = vec![];
 
-            // set-up memory and stack 
+            // set-up memory and stack
             // FIXME: decide how memory's going to work, the stack pointer address,
-            //        track its initial size, etc
-            //     -> temporarily, just ask for one page
+            //        track its initial size, etc and extract that into its own abstraction
+            //     -> temporarily, just ask for one 64K page
             BinaryenSetMemory(self.module, BinaryenIndex(1), BinaryenIndex(1),
                               ptr::null(), ptr::null(), ptr::null(), ptr::null(),
                               BinaryenIndex(0));
@@ -913,7 +785,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 ptr::null_mut(),
                                 BinaryenIndex(0),
                                 body)
-        }       
+        }
     }
 
     fn import_wasm_extern(&mut self, did: DefId, sig: &ty::FnSig<'tcx>) {
@@ -978,6 +850,7 @@ fn sanitize_symbol(s: &str) -> String {
     }).collect()
 }
 
+// The following is imported from miri as well
 trait StructExt {
     fn field_offset(&self, index: usize) -> Size;
 }
