@@ -274,6 +274,8 @@ extern {
 
     pub fn BinaryenModuleRead(input: *const c_char, inputSize: size_t) -> BinaryenModuleRef;
 
+    pub fn BinaryenModuleInterpret(module: BinaryenModuleRef);
+
     // CFG / Relooper
 
     pub fn RelooperCreate() -> RelooperRef;
