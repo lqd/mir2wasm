@@ -17,6 +17,7 @@ use syntax::codemap::Span;
 use std::ffi::CString;
 use std::ptr;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use binaryen::*;
 use monomorphize;
 use traits;
@@ -118,13 +119,6 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
     c_strings: &'v mut Vec<CString>,
 }
 
-#[derive(Debug)]
-enum BinaryenCallKind {
-    Direct,
-    Import,
-    // Indirect // unimplemented at the moment
-}
-
 impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
     /// This is the main entry point for MIR->wasm fn translation
     fn trans(&mut self) {
@@ -207,6 +201,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 }
             }
 
+            let mut block_kind = BinaryenBlockKind::Default;
+
             // Some features of MIR terminators tranlate to wasm
             // expressions, some translate to relooper edges. These
             // are the expressions.
@@ -225,6 +221,34 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     let expr = self.trans_operand(&Operand::Consume(Lvalue::ReturnPointer));
                     let expr = unsafe { BinaryenReturn(self.module, expr) };
                     binaryen_stmts.push(expr);
+                }
+                TerminatorKind::Switch { ref discr, .. } => {
+                    let adt = self.trans_lval(discr);
+                    let adt_ty = self.mir.lvalue_ty(*self.tcx, discr).to_ty(*self.tcx);
+
+                    // TODO: handle substs at the frame level
+                    let substs = self.tcx.mk_substs(Substs::empty());
+                    let adt_layout = self.type_layout_with_substs(adt_ty, substs);
+
+                    let discr_val = match *adt_layout {
+                        Layout::General { discr, .. } => {
+                            let discr_size = discr.size().bytes() as u32;
+
+                            if adt.offset.is_some() {
+                                panic!("unimplemented Switch with offset");
+                            }
+
+                            debug!("emitting GetLocal + Load for Switch condition");
+                            unsafe {
+                                let ptr = BinaryenGetLocal(self.module, adt.index, BinaryenInt32());
+                                BinaryenLoad(self.module, discr_size, 0, 0, 0, BinaryenInt32(), ptr)
+                            }
+                        }
+
+                        _ => panic!("unimplemented/invalid discrimant value for Layout {:?}", adt_layout)
+                    };
+
+                    block_kind = BinaryenBlockKind::Switch(discr_val);
                 }
                 TerminatorKind::Call {
                     ref func, ref args, ref destination, ..
@@ -250,7 +274,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                         match *destination {
                             Some((ref lvalue, _)) => {
-                                let (lvalue_index, _) = self.trans_lval(lvalue);
+                                let lvalue = self.trans_lval(lvalue);
 
                                 if b_fnty == BinaryenNone() {
                                     // The result of the Rust call is put in MIR into a tmp local,
@@ -260,10 +284,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     binaryen_stmts.push(b_call);
 
                                     let unit_type = BinaryenConst(self.module, BinaryenLiteralInt32(-1));
-                                    binaryen_stmts.push(BinaryenSetLocal(self.module, lvalue_index, unit_type));
+                                    binaryen_stmts.push(BinaryenSetLocal(self.module, lvalue.index, unit_type));
                                 } else {
                                     debug!("emitting {:?} Call to fn {:?} + SetLocal of the result", call_kind, func);
-                                    binaryen_stmts.push(BinaryenSetLocal(self.module, lvalue_index, b_call));
+                                    binaryen_stmts.push(BinaryenSetLocal(self.module, lvalue.index, b_call));
                                 }
                             }
                             _ => {
@@ -282,11 +306,15 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 let name = CString::new(name).expect("");
                 let name_ptr = name.as_ptr();
                 self.c_strings.push(name);
+
+                debug!("emitting {}-statement Block bb{}", binaryen_stmts.len(), i);
                 let binaryen_expr = BinaryenBlock(self.module, name_ptr,
                                                   binaryen_stmts.as_ptr(),
                                                   BinaryenIndex(binaryen_stmts.len() as _));
-                let relooper_block = RelooperAddBlock(relooper, binaryen_expr);
-                debug!("emitting {}-statement Block bb{}", binaryen_stmts.len(), i);
+                let relooper_block = match block_kind {
+                    BinaryenBlockKind::Default => RelooperAddBlock(relooper, binaryen_expr),
+                    BinaryenBlockKind::Switch(ref cond) => RelooperAddBlockWithSwitch(relooper, binaryen_expr, *cond)
+                };
                 relooper_blocks.push(relooper_block);
             }
         }
@@ -314,6 +342,45 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         RelooperAddBranch(relooper_blocks[i], relooper_blocks[targets.1.index()],
                                           BinaryenExpressionRef(ptr::null_mut()),
                                           BinaryenExpressionRef(ptr::null_mut()));
+                    }
+                }
+                TerminatorKind::Switch { ref adt_def, ref targets, .. } => {
+                    // We're required to have only unique (from, to) edges, while we have
+                    // a variant to target mapping, where multiple variants can branch to
+                    // the same target block. So group them by target block index.
+                    let target_per_variant = targets.iter().map(|&t| t.index());
+                    let mut variants_per_target = HashMap::new();
+                    for (variant, target) in target_per_variant.enumerate() {
+                        match variants_per_target.entry(target) {
+                    		Entry::Vacant(entry) => { entry.insert(vec![variant]); },
+                    		Entry::Occupied(mut entry) => { entry.get_mut().push(variant); },
+                    	}
+                    }
+
+                    for (target, variants) in variants_per_target {
+                        debug!("emitting Switch branch from bb{} to bb{}, for Enum '{:?}' variants {:?}", i, target, adt_def, variants);
+
+                        // TODO: is it necessary to handle cases where the discriminant is not a valid u32 ? (doubtful)
+                        let labels = variants.iter().map(|&v| {
+                            let discr_val = adt_def.variants[v].disr_val.to_u32().unwrap();
+                            BinaryenIndex(discr_val)
+                        }).collect::<Vec<_>>();
+
+                        // We're also required to have a "default" branch, even though this is less useful to us
+                        // as we have a target for every variant.
+                        // TODO: figure out the best way to handle this, maybe add an unreachable block to trigger
+                        //       an error. In the meantime, consider the edge to the first variant as the default branch
+                        let (labels_ptr, labels_count) = if variants.contains(&0) {
+                            (ptr::null(), 0)
+                        } else {
+                            (labels.as_ptr(), labels.len())
+                        };
+
+                        unsafe {
+                            RelooperAddBranchForSwitch(relooper_blocks[i], relooper_blocks[target],
+                                                       labels_ptr, BinaryenIndex(labels_count as _),
+                                                       BinaryenExpressionRef(ptr::null_mut()));
+                        }
                     }
                 }
                 TerminatorKind::Return => {
@@ -355,20 +422,17 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
             // Create the function prologue
             // TODO: the epilogue and prologue are not always necessary
-            let read_sp = BinaryenLoad(self.module, 4, 0, 0, 0, BinaryenInt32(),
-                                       BinaryenConst(self.module, BinaryenLiteralInt32(0)));
-            let copy_sp = BinaryenSetLocal(self.module, stack_pointer_local, read_sp);
+            let copy_sp = BinaryenSetLocal(self.module, stack_pointer_local, self.emit_read_sp());
             let prologue = RelooperAddBlock(relooper, copy_sp);
-            relooper_blocks.insert(0, prologue);
 
-            if relooper_blocks.len() > 1 {
-                RelooperAddBranch(relooper_blocks[0], relooper_blocks[1],
+            if relooper_blocks.len() > 0 {
+                RelooperAddBranch(prologue, relooper_blocks[0],
                                   BinaryenExpressionRef(ptr::null_mut()),
                                   BinaryenExpressionRef(ptr::null_mut()));
             }
 
             let body = RelooperRenderAndDispose(relooper,
-                                                relooper_blocks[0],
+                                                prologue,
                                                 relooper_local,
                                                 self.module);
             BinaryenAddFunction(self.module, fn_name_ptr,
@@ -395,7 +459,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
     }
 
     fn trans_assignment(&mut self, lvalue: &Lvalue<'tcx>, rvalue: &Rvalue<'tcx>, statements: &mut Vec<BinaryenExpressionRef>) {
-        let (lvalue_index, lvalue_offset) = self.trans_lval(lvalue);
+        let binaryen_lvalue = self.trans_lval(lvalue);
         let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
 
         match *rvalue {
@@ -403,16 +467,16 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 let src = self.trans_operand(operand);
 
                 unsafe {
-                    let statement = match lvalue_offset {
+                    let statement = match binaryen_lvalue.offset {
                         Some(offset) => {
                             debug!("emitting Store + GetLocal for Assign Use '{:?} = {:?}'", lvalue, rvalue);
-                            let ptr = BinaryenGetLocal(self.module, lvalue_index, rust_ty_to_binaryen(dest_ty));
+                            let ptr = BinaryenGetLocal(self.module, binaryen_lvalue.index, rust_ty_to_binaryen(dest_ty));
                             // TODO: match on the dest_ty to know how many bytes to write, not just i32s
                             BinaryenStore(self.module, 4, offset * 8, 0, ptr, src)
                         }
                         None => {
                             debug!("emitting SetLocal for Assign Use '{:?} = {:?}'", lvalue, rvalue);
-                            BinaryenSetLocal(self.module, lvalue_index, src)
+                            BinaryenSetLocal(self.module, binaryen_lvalue.index, src)
                         }
                     };
                     statements.push(statement);
@@ -437,7 +501,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                     debug!("emitting SetLocal for Assign BinaryOp '{:?} = {:?}'", lvalue, rvalue);
                     let op = BinaryenBinary(self.module, op, left, right);
-                    statements.push(BinaryenSetLocal(self.module, lvalue_index, op));
+                    statements.push(BinaryenSetLocal(self.module, binaryen_lvalue.index, op));
                 }
             }
 
@@ -447,7 +511,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 let expr = self.trans_operand(&Operand::Consume(lvalue.clone()));
                 unsafe {
                     debug!("emitting SetLocal for Assign Ref '{:?} = {:?}'", lvalue, rvalue);
-                    let expr = BinaryenSetLocal(self.module, lvalue_index, expr);
+                    let expr = BinaryenSetLocal(self.module, binaryen_lvalue.index, expr);
                     statements.push(expr);
                 }
             }
@@ -463,31 +527,38 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         match *dest_layout {
                             Layout::Univariant { ref variant, .. } => {
                                 // NOTE: use the variant's min_size and alignment for dest_size ?
-                                // TODO: extract the following into the Memory abstraction as well
-                                unsafe {
-                                    // alloca
-                                    debug!("allocating struct {:?} in linear memory, size: {:?} bytes ", adt_def, dest_size);
+                                debug!("allocating struct '{:?}' in linear memory, size: {:?} bytes ", adt_def, dest_size);
+                                let allocation = self.emit_alloca(binaryen_lvalue.index, dest_size);
+                                statements.push(allocation);
 
-                                    let sp = BinaryenConst(self.module, BinaryenLiteralInt32(0));
-                                    let read_sp = BinaryenLoad(self.module, 4, 0, 0, 0, BinaryenInt32(), sp);
+                                let offsets = ::std::iter::once(0).chain(variant.offset_after_field.iter().map(|s| s.bytes()));
+                                debug!("emitting Stores for struct '{:?}' fields, values: {:?}", adt_def, operands);
+                                self.emit_assign_fields(offsets, operands, statements);
+                            }
 
-                                    let dest_size = BinaryenConst(self.module, BinaryenLiteralInt32(dest_size));
-                                    let decr_sp = BinaryenBinary(self.module, BinaryenSubInt32(), read_sp, dest_size);
-                                    let write_sp = BinaryenStore(self.module, 4, 0, 0, sp, decr_sp);
-                                    let write_local = BinaryenSetLocal(self.module, lvalue_index, write_sp);
-                                    statements.push(write_local);
+                            Layout::General { discr, ref variants, .. } => {
+                                if let AggregateKind::Adt(ref adt_def, variant, _) = *kind {
+                                    let discr_val = adt_def.variants[variant].disr_val.to_u32().unwrap();
+                                    let discr_size = discr.size().bytes() as u32;
 
-                                    // set fields
-                                    let offsets = ::std::iter::once(0).chain(variant.offset_after_field.iter().map(|s| s.bytes()));
-                                    for (offset, operand) in offsets.into_iter().zip(operands) {
-                                        // let operand_ty = self.mir.operand_ty(*self.tcx, operand);
-                                        // TODO: match on the operand_ty to know how many bytes to store, not just i32s
+                                    debug!("allocating Enum '{:?}' in linear memory, size: {:?} bytes", adt_def, dest_size);
+                                    let allocation = self.emit_alloca(binaryen_lvalue.index, dest_size);
+                                    statements.push(allocation);
 
-                                        let src = self.trans_operand(operand);
-                                        let write_field = BinaryenStore(self.module, 4, offset as u32 * 8, 0, read_sp, src);
-                                        debug!("emitting Store field, offset {:?}, value '{:?}'", offset * 8, operand);
-                                        statements.push(write_field);
+                                    // set enum discr
+                                    // TODO: extract the following into the Memory abstraction/fns
+                                    unsafe {
+                                        debug!("emitting Store for Enum '{:?}' discr: {:?}", adt_def, discr_val);
+                                        let discr_val = BinaryenConst(self.module, BinaryenLiteralInt32(discr_val as i32));
+                                        let write_discr = BinaryenStore(self.module, discr_size, 0, 0, self.emit_read_sp(), discr_val);
+                                        statements.push(write_discr);
                                     }
+
+                                    debug!("emitting Stores for Enum '{:?}' fields, operands '{:?}'", adt_def, operands);
+                                    let offsets = variants[variant].offset_after_field.iter().map(|s| s.bytes());
+                                    self.emit_assign_fields(offsets, operands, statements);
+                                } else {
+                                    panic!("tried to assign {:?} to Layout::General", kind);
                                 }
                             }
                             _ => panic!("unimplemented Assign Aggregate Adt {:?} on Layout {:?}", adt_def, dest_layout)
@@ -511,7 +582,48 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         }
     }
 
-    fn trans_lval(&mut self, lvalue: &Lvalue<'tcx>) -> (BinaryenIndex, Option<u32>) {
+    // TODO: handle > 2GB allocations, when more types are handled and there's a consistent story around signed and unsigned
+    fn emit_alloca(&self, dest: BinaryenIndex, dest_size: i32) -> BinaryenExpressionRef {
+        unsafe {
+            let sp = BinaryenConst(self.module, BinaryenLiteralInt32(0));
+            let read_sp = BinaryenLoad(self.module, 4, 0, 0, 0, BinaryenInt32(), sp);
+
+            let dest_size = BinaryenConst(self.module, BinaryenLiteralInt32(dest_size));
+            let decr_sp = BinaryenBinary(self.module, BinaryenSubInt32(), read_sp, dest_size);
+            let write_sp = BinaryenStore(self.module, 4, 0, 0, sp, decr_sp);
+            let write_local = BinaryenSetLocal(self.module, dest, write_sp);
+            write_local
+        }
+    }
+
+    fn emit_read_sp(&self) -> BinaryenExpressionRef {
+        unsafe {
+            let sp = BinaryenConst(self.module, BinaryenLiteralInt32(0));
+            let read_sp = BinaryenLoad(self.module, 4, 0, 0, 0, BinaryenInt32(), sp);
+            read_sp
+        }
+    }
+
+    fn emit_assign_fields<I>(&mut self,
+                             offsets: I,
+                             operands: &[Operand<'tcx>],
+                             statements: &mut Vec<BinaryenExpressionRef>)
+            where I: IntoIterator<Item = u64> {
+        unsafe {
+            let read_sp = self.emit_read_sp();
+
+            for (offset, operand) in offsets.into_iter().zip(operands) {
+                // let operand_ty = self.mir.operand_ty(*self.tcx, operand);
+                // TODO: match on the operand_ty to know how many bytes to store, not just i32s
+                let offset = offset as u32 * 8;
+                let src = self.trans_operand(operand);
+                let write_field = BinaryenStore(self.module, 4, offset, 0, read_sp, src);
+                statements.push(write_field);
+            }
+        }
+    }
+
+    fn trans_lval(&mut self, lvalue: &Lvalue<'tcx>) -> BinaryenLvalue {
         let i = match *lvalue {
             Lvalue::Arg(i) => i,
             Lvalue::Var(i) => self.mir.arg_decls.len() as u32 + i,
@@ -525,7 +637,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     self.mir.temp_decls.len() as u32
             }
             Lvalue::Projection(ref projection) => {
-                let (base, offset) = self.trans_lval(&projection.base);
+                let base = self.trans_lval(&projection.base);
                 let base_ty = self.mir.lvalue_ty(*self.tcx, &projection.base).to_ty(*self.tcx);
 
                 // TODO: Actually, those substs should probably be collected for the whole frame, like miri does
@@ -534,19 +646,37 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                 match projection.elem {
                     ProjectionElem::Deref => {
-                        if offset.is_none() {
-                            return (base, None);
+                        if base.offset.is_none() {
+                            return BinaryenLvalue::new(base.index, None, LvalueExtra::None);
                         }
                         panic!("unimplemented Deref {:?}", lvalue);
                     }
                     ProjectionElem::Field(ref field, _) => {
                         let variant = match *base_layout {
                             Layout::Univariant { ref variant, .. } => variant,
+                            Layout::General { ref variants, ..} => {
+                                if let LvalueExtra::DowncastVariant(variant_idx) = base.extra {
+                                    &variants[variant_idx]
+                                } else {
+                                    panic!("field access on enum had no variant index");
+                                }
+                            }
                             _ => panic!("unimplemented Field Projection: {:?}", projection)
                         };
 
-                        let offset = variant.field_offset(field.index()).bytes();
-                        return (base, Some(offset as u32));
+                        let offset = variant.field_offset(field.index()).bytes() as u32;
+                        return BinaryenLvalue::new(base.index, base.offset, LvalueExtra::None).offset(offset);
+                    }
+                    ProjectionElem::Downcast(_, variant) => {
+                        match *base_layout {
+                            Layout::General { discr, .. } => {
+                                assert!(base.offset.is_none(), "unimplemented Downcast Projection with offset");
+
+                                let offset = discr.size().bytes() as u32;
+                                return BinaryenLvalue::new(base.index, Some(offset), LvalueExtra::DowncastVariant(variant));
+                            }
+                            _ => panic!("unimplemented Downcast Projection: {:?}", projection)
+                        }
                     }
                     _ => panic!("unimplemented Projection: {:?}", projection)
                 }
@@ -554,28 +684,28 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             _ => panic!("unimplemented Lvalue: {:?}", lvalue)
         };
 
-        (BinaryenIndex(i), None)
+        BinaryenLvalue::new(BinaryenIndex(i), None, LvalueExtra::None)
     }
 
     fn trans_operand(&mut self, operand: &Operand<'tcx>) -> BinaryenExpressionRef {
         match *operand {
             Operand::Consume(ref lvalue) => {
-                let (index, offset) = self.trans_lval(lvalue);
+                let binaryen_lvalue = self.trans_lval(lvalue);
                 let lval_ty = self.mir.lvalue_ty(*self.tcx, lvalue);
                 let t = lval_ty.to_ty(*self.tcx);
                 let t = rust_ty_to_binaryen(t);
 
                 unsafe {
-                    match offset {
+                    match binaryen_lvalue.offset {
                         Some(offset) => {
                             debug!("emitting GetLocal + Load for '{:?}'", lvalue);
-                            let ptr = BinaryenGetLocal(self.module, index, t);
+                            let ptr = BinaryenGetLocal(self.module, binaryen_lvalue.index, t);
                             // TODO: match on the field ty to know how many bytes to read, not just i32s
                             BinaryenLoad(self.module, 4, 0, offset * 8, 0, BinaryenInt32(), ptr)
                         }
                         None => {
                             // debug!("emitting GetLocal for '{:?}'", lvalue);
-                            BinaryenGetLocal(self.module, index, t)
+                            BinaryenGetLocal(self.module, binaryen_lvalue.index, t)
                         }
                     }
                 }
@@ -850,7 +980,69 @@ fn sanitize_symbol(s: &str) -> String {
     }).collect()
 }
 
+#[derive(Debug)]
+enum BinaryenCallKind {
+    Direct,
+    Import,
+    // Indirect // unimplemented at the moment
+}
+
+enum BinaryenBlockKind {
+    Default,
+    Switch(BinaryenExpressionRef)
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct BinaryenLvalue {
+    index: BinaryenIndex,
+    offset: Option<u32>,
+    extra: LvalueExtra,
+}
+
+impl BinaryenLvalue {
+    fn new(index: BinaryenIndex, offset: Option<u32>, extra: LvalueExtra) -> Self {
+        BinaryenLvalue {
+            index: index,
+            offset: offset,
+            extra: extra
+        }
+    }
+
+    fn offset(&self, offset: u32) -> Self {
+        let offset = match self.offset {
+            None => Some(offset),
+            Some(base_offset) => Some(base_offset + offset)
+        };
+
+        Self::new(self.index, offset, self.extra)
+    }
+}
+
 // The following is imported from miri as well
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum LvalueExtra {
+    None,
+    // Length(u64),
+    // TODO(solson): Vtable(memory::AllocId),
+    DowncastVariant(usize),
+}
+
+trait IntegerExt {
+    fn size(self) -> Size;
+}
+
+impl IntegerExt for layout::Integer {
+    fn size(self) -> Size {
+        use rustc::ty::layout::Integer::*;
+        match self {
+            I1 | I8 => Size::from_bits(8),
+            I16 => Size::from_bits(16),
+            I32 => Size::from_bits(32),
+            I64 => Size::from_bits(64),
+        }
+    }
+}
+
 trait StructExt {
     fn field_offset(&self, index: usize) -> Size;
 }

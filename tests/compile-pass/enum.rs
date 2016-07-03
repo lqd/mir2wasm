@@ -1,5 +1,3 @@
-// xfail
-
 #![feature(lang_items, no_core)]
 #![allow(dead_code)]
 #![no_core]
