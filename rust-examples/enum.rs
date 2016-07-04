@@ -25,6 +25,12 @@ enum Tag {
     C,
 }
 
+enum Ordering {
+    Less = -1,
+    Equal = 0,
+    Greater = 1,
+}
+
 #[main]
 fn main() {
     let t = Tag::B(17);

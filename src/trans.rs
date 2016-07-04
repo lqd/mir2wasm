@@ -231,7 +231,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     let adt_layout = self.type_layout_with_substs(adt_ty, substs);
 
                     let discr_val = match *adt_layout {
-                        Layout::General { discr, .. } => {
+                        Layout::General { discr, .. } | Layout::CEnum { discr, .. } => {
                             let discr_size = discr.size().bytes() as u32;
 
                             if adt.offset.is_some() {
@@ -296,7 +296,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             }
                         }
                     } else {
-                        panic!()
+                        debug!("ignoring untranslated fn call to {:?}", func)
+                        // panic!()
                     }
                 },
                 _ => ()
@@ -362,7 +363,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                         // TODO: is it necessary to handle cases where the discriminant is not a valid u32 ? (doubtful)
                         let labels = variants.iter().map(|&v| {
-                            let discr_val = adt_def.variants[v].disr_val.to_u32().unwrap();
+                            let discr_val = adt_def.variants[v].disr_val.to_u64_unchecked() as u32;
                             BinaryenIndex(discr_val)
                         }).collect::<Vec<_>>();
 
@@ -399,7 +400,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                                   BinaryenExpressionRef(ptr::null_mut()));
                             }
                         }
-                        _ => panic!()
+                        _ => debug!("ignoring destination-less call") //panic!()
                     }
                 }
                 _ => panic!("unimplemented terminator {:?}", bb.terminator().kind)
@@ -435,6 +436,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                                 prologue,
                                                 relooper_local,
                                                 self.module);
+
             BinaryenAddFunction(self.module, fn_name_ptr,
                                 *self.fun_types.get(self.sig).unwrap(),
                                 locals.as_ptr(),
@@ -561,6 +563,37 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     panic!("tried to assign {:?} to Layout::General", kind);
                                 }
                             }
+
+                            Layout::CEnum { discr, signed, .. } => {
+                                assert_eq!(operands.len(), 0);
+                                if let AggregateKind::Adt(adt_def, variant, _) = *kind {
+                                    let discr_val = adt_def.variants[variant].disr_val.to_u64_unchecked();
+                                    let discr_size = discr.size().bytes() as u32;
+
+                                    // set enum discr
+                                    // TODO: extract the following into the Memory abstraction/fns
+                                    unsafe {
+                                        // debug!("emitting Store for CEnum '{:?}' discr: {:?}", adt_def, discr_val);
+                                        // let discr_val = BinaryenConst(self.module, BinaryenLiteralInt64(discr_val as i64));
+                                        // let write_discr = BinaryenStore(self.module, discr_size, 0, 0, self.emit_read_sp(), discr_val);
+                                        // statements.push(write_discr);
+
+                                        debug!("emitting SetLocal for CEnum Assign '{:?} = {:?}'", lvalue, rvalue);
+                                        let discr_val = BinaryenConst(self.module, BinaryenLiteralInt64(discr_val as i64));
+                                        let write_discr = BinaryenSetLocal(self.module, binaryen_lvalue.index, discr_val);
+                                        statements.push(write_discr);
+                                    }
+
+                                    // if signed {
+                                    //     self.memory.write_int(dest, val as i64, size)?;
+                                    // } else {
+                                    //     self.memory.write_uint(dest, val, size)?;
+                                    // }
+                                } else {
+                                    panic!("tried to assign {:?} to Layout::CEnum", kind);
+                                }
+                            }
+
                             _ => panic!("unimplemented Assign Aggregate Adt {:?} on Layout {:?}", adt_def, dest_layout)
                         }
                     }
@@ -835,12 +868,15 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                         BinaryenNone()
                                     }
                                 }
-                                _ => panic!()
+                                _ => {
+                                    debug!("unimplemented diverging fn {:?}", self.fun_names[&(fn_did, fn_sig)]);
+                                    return None;
+                                }
                             };
 
                             Some((self.fun_names[&(fn_did, fn_sig)].as_ptr(), ret_ty, call_kind))
                         } else {
-                            panic!();
+                            panic!("unimplemented ty {:?} for {:?}", ty, def_id);
                         }
                     }
                     _ => panic!("{:?}", c)
