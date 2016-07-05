@@ -10,7 +10,7 @@ use rustc::ty::subst::Substs;
 use rustc::hir::intravisit::{self, Visitor, FnKind};
 use rustc::hir::{FnDecl, Block};
 use rustc::hir::def_id::DefId;
-use rustc::traits::{ProjectionMode};
+use rustc::traits::ProjectionMode;
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
 use syntax::attr::AttrMetaMethods;
 use syntax::codemap::Span;
@@ -636,11 +636,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             }
                             _ => panic!("unimplemented '{:?}' Cast '{:?} = {:?}', for {:?} to {:?}", kind, lvalue, rvalue, src_layout, dest_ty.sty)
                         }
-                         
+
                         // panic!("unimplemented Cast kind {:?} '{:?} = {:?}' - types: {:?}, {:?}, {:?}", kind, lvalue, rvalue, ty, src_ty, src_layout)
                     }
                     _ => panic!("unimplemented '{:?}' Cast '{:?} = {:?}'", kind, lvalue, rvalue)
-                }               
+                }
             }
 
             _ => panic!("unimplemented Assign '{:?} = {:?}'", lvalue, rvalue)
@@ -890,7 +890,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                             c_strings: &mut self.c_strings,
                                         };
 
-                                        debug!("translating monomorphized fn {:?}", operand);                                      
+                                        debug!("translating monomorphized fn {:?}", operand);
                                         ctxt.trans();
                                         debug!("done translating monomorphized {:?}", operand);
                                     }
