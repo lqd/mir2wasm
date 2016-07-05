@@ -46,10 +46,10 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
         assert!(BinaryenModuleValidate(v.module) == 1, "Internal compiler error: invalid generated module");
 
-        BinaryenModulePrint(v.module);
+        // BinaryenModulePrint(v.module);
 
         // TODO: add CLI option to launch the interpreter: --run ?
-        // BinaryenModuleInterpret(v.module);
+        BinaryenModuleInterpret(v.module);
 
         // TODO: add CLI option to save the module to a specified file: -o ?
         // BinaryenModuleWrite(v.module, ...)
@@ -465,6 +465,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         let binaryen_lvalue = self.trans_lval(lvalue);
         let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
 
+        let dest_layout = self.type_layout_with_substs(dest_ty, self.tcx.mk_substs(Substs::empty()));
+        debug!("trans_assignment to dest_ty {:?}, dest_layout {:?}", dest_ty, dest_layout);
+
         match *rvalue {
             Rvalue::Use(ref operand) => {
                 let src = self.trans_operand(operand);
@@ -598,7 +601,20 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             // TODO: in general, have a consistent strategy to handle the unit type assigns/returns
                             debug!("ignoring Assign '{:?} = {:?}'", lvalue, rvalue);
                         } else {
-                            panic!("unimplemented Assign '{:?} = {:?}'", lvalue, rvalue);
+                            match *dest_layout {
+                                Layout::Univariant { ref variant, .. } => {
+                                    let dest_size = self.type_size_with_substs(dest_ty, self.tcx.mk_substs(Substs::empty())) as i32 * 8;
+                                    // NOTE: use the variant's min_size and alignment for dest_size ?
+                                    debug!("allocating tuple in linear memory, size: {:?} bytes", dest_size);
+                                    let allocation = self.emit_alloca(binaryen_lvalue.index, dest_size);
+                                    statements.push(allocation);
+
+                                    let offsets = ::std::iter::once(0).chain(variant.offset_after_field.iter().map(|s| s.bytes()));
+                                    debug!("emitting Stores for tuple fields, values: {:?}", operands);
+                                    self.emit_assign_fields(offsets, operands, statements);
+                                }
+                                _ => panic!("unimplemented Assign '{:?} = {:?}'", lvalue, rvalue)
+                            }
                         }
                     }
 
@@ -854,7 +870,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 }
                                 _ => {
                                     let type_scheme = self.tcx.lookup_item_type(fn_did);
-                                    let is_monomorphic = type_scheme.generics.types.is_empty();
+                                    let is_monomorphic = substs.self_ty().is_none(); //type_scheme.generics.types.is_empty();
 
                                     let nid = self.tcx.map.as_local_node_id(fn_did).expect("");
                                     let (nid, substs, sig) = if self.mir_map.map.contains_key(&nid) && is_monomorphic {
@@ -862,7 +878,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     } else {
                                         // only trait methods can have a Self parameter
                                         if substs.self_ty().is_none() {
-                                            panic!("unimplemented fn trans: {:?}", fn_did);
+                                            panic!("unimplemented fn trans: {:?} — {:?}", fn_did,
+                                                monomorphize::apply_param_substs(self.tcx, substs, sig));
                                         }
 
                                         let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.tcx, fn_did, substs);

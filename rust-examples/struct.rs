@@ -1,14 +1,36 @@
 #![feature(intrinsics, lang_items, main, no_core, fundamental)]
 #![no_core]
 
-#[lang = "sized"]
-#[fundamental]
-pub trait Sized { }
+pub mod marker {
+    #[lang = "sized"]
+    #[fundamental]
+    pub trait Sized { }
 
-#[lang = "copy"]
-pub trait Copy : Clone { }
+    #[lang = "copy"]
+    pub trait Copy : ::clone::Clone { }
+}
 
-pub trait Clone : Sized { }
+pub mod clone {
+    use marker::Sized;
+
+    pub trait Clone : ::marker::Sized {
+        fn clone(&self) -> Self;
+    }
+
+    pub fn assert_receiver_is_clone<T: Clone + ?Sized>(_: &T) {}
+
+    macro_rules! clone_impl {
+        ($t:ty) => {
+            impl Clone for $t {
+                /// Returns a deep copy of the value.
+                #[inline]
+                fn clone(&self) -> $t { *self }
+            }
+        }
+    }
+
+    clone_impl! { i32 }
+}
 
 #[lang = "mul"]
 pub trait Mul<RHS=Self> {
@@ -32,6 +54,7 @@ mod wasm {
     }
 }
 
+#[derive(Clone, Copy)]
 struct Rectangle {
     w: i32,
     h: i32,
@@ -43,6 +66,8 @@ impl Rectangle {
     }
 }
 
+use clone::Clone;
+
 #[main]
 fn main() {
     let mut r = Rectangle {w: 2, h: 5};
@@ -50,4 +75,8 @@ fn main() {
 
     r.w = 3;
     wasm::print_i32(r.area()); // (i32.const 15)
+
+    let mut r = r.clone();
+    r.w = 4;
+    wasm::print_i32(r.area()); // (i32.const 20)
 }
