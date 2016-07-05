@@ -32,6 +32,48 @@
 #![feature(lang_items, no_core, main, fundamental, intrinsics)]
 #![no_core]
 
+#[main]
+fn main() {
+    let x: i32 = 0;
+    let y: i32 = 1;
+
+    // (i32.const 0)
+    wasm::print_i32((x == y) as i32);
+    wasm::print_i32((x.eq(&y)) as i32);
+
+    // (i32.const 1)
+    wasm::print_i32((x != y) as i32);
+    wasm::print_i32((x.ne(&y)) as i32);
+
+    // (i32.const 1)
+    wasm::print_i32((x < y) as i32);
+    wasm::print_i32((x.lt(&y)) as i32);
+
+    // (i32.const 1)
+    wasm::print_i32((x <= y) as i32);
+    wasm::print_i32((x.le(&y)) as i32);
+
+    // (i32.const 0)
+    wasm::print_i32((x > y) as i32);
+    wasm::print_i32((x.gt(&y)) as i32);
+
+    // (i32.const 0)
+    wasm::print_i32((x >= y) as i32);
+    wasm::print_i32((x.ge(&y)) as i32);
+}
+
+
+// access to the wasm "spectest" module test printing functions
+mod wasm {
+    pub fn print_i32(i: i32) {
+        unsafe { _print_i32(i); }
+    }
+
+    extern {
+        fn _print_i32(i: i32);
+    }
+}
+
 #[cold] #[inline(never)] // this is the slow path, always
 #[lang = "panic"]
 pub fn panic(_: &(&'static str, &'static str, u32)) -> ! {
@@ -47,38 +89,40 @@ pub fn panic(_: &(&'static str, &'static str, u32)) -> ! {
 
 #[lang = "panic_fmt"] fn panic_fmt() -> ! { loop {} }
 
-#[lang = "sized"]
-#[fundamental]
-pub trait Sized { }
+pub mod marker {
+    #[lang = "sized"]
+    #[fundamental]
+    pub trait Sized { }
 
-#[lang = "copy"]
-pub trait Copy : Clone { }
-
-pub trait Clone : Sized { }
-
-pub trait Hash { }
-
-#[main]
-fn main() {
-
+    #[lang = "copy"]
+    pub trait Copy : ::clone::Clone { }
 }
 
 use Ordering::*;
-// use marker::Sized;
-// use option::Option::{self, Some};
+use marker::Sized;
+use option::Option::{self, Some};
 
-//#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Debug, Hash)]
-
-pub enum Option<T> {
-    /// No value
-
-    None,
-    /// Some value `T`
-
-    Some(T)
+pub mod clone {
+    pub trait Clone : ::marker::Sized {
+        fn clone(&self) -> Self;
+    }
 }
 
-use Option::*;
+// pub trait Hash { }
+
+mod option {
+    // #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord/*, Debug, Hash*/)]
+    pub enum Option<T> {
+        /// No value
+        None,
+        /// Some value `T`
+        Some(T)
+    }
+}
+
+// mod intrinsics {
+// use self::Ordering::*;
+// use super::Option::{self, Some};
 
 /// Trait for equality comparisons which are [partial equivalence
 /// relations](http://en.wikipedia.org/wiki/Partial_equivalence_relation).
@@ -144,16 +188,13 @@ use Option::*;
 /// assert_eq!(x.eq(&y), false);
 /// ```
 #[lang = "eq"]
-
 pub trait PartialEq<Rhs: ?Sized = Self> {
     /// This method tests for `self` and `other` values to be equal, and is used
     /// by `==`.
-
     fn eq(&self, other: &Rhs) -> bool;
 
     /// This method tests for `!=`.
     #[inline]
-
     fn ne(&self, other: &Rhs) -> bool { !self.eq(other) }
 }
 
@@ -228,24 +269,21 @@ pub trait Eq: PartialEq<Self> {
 /// assert_eq!(Ordering::Greater, result);
 /// ```
 // #[derive(Clone, Copy, PartialEq, Debug, Hash)]
-
+#[derive(Clone, Copy/*, PartialEq, Debug, Hash*/)]
 pub enum Ordering {
     /// An ordering where a compared value is less [than another].
-
     Less = -1,
     /// An ordering where a compared value is equal [to another].
-
     Equal = 0,
     /// An ordering where a compared value is greater [than another].
-
     Greater = 1,
 }
 
-impl Clone for Ordering {}
-impl Copy for Ordering {}
+// impl Clone for Ordering {}
+// impl Copy for Ordering {}
 impl<Rhs> PartialEq<Rhs> for Ordering {
     fn eq(&self, other: &Rhs) -> bool {
-        true
+        self == other
     }
 }
 
@@ -280,7 +318,6 @@ impl Ordering {
     /// assert!(data == b);
     /// ```
     #[inline]
-
     pub fn reverse(self) -> Ordering {
         match self {
             Less => Greater,
@@ -356,7 +393,6 @@ pub trait Ord: Eq + PartialOrd<Self> {
     /// assert_eq!(10.cmp(&5), Ordering::Greater);
     /// assert_eq!(5.cmp(&5), Ordering::Equal);
     /// ```
-
     fn cmp(&self, other: &Self) -> Ordering;
 }
 
@@ -473,7 +509,6 @@ impl PartialOrd for Ordering {
 /// assert_eq!(x.lt(&y), true);
 /// ```
 #[lang = "ord"]
-
 pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
     /// This method returns an ordering between `self` and `other` values if one exists.
     ///
@@ -498,7 +533,6 @@ pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
     /// let result = std::f64::NAN.partial_cmp(&1.0);
     /// assert_eq!(result, None);
     /// ```
-
     fn partial_cmp(&self, other: &Rhs) -> Option<Ordering>;
 
     /// This method tests less than (for `self` and `other`) and is used by the `<` operator.
@@ -513,7 +547,6 @@ pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
     /// assert_eq!(result, false);
     /// ```
     #[inline]
-
     fn lt(&self, other: &Rhs) -> bool {
         match self.partial_cmp(other) {
             Some(Less) => true,
@@ -534,7 +567,6 @@ pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
     /// assert_eq!(result, true);
     /// ```
     #[inline]
-
     fn le(&self, other: &Rhs) -> bool {
         match self.partial_cmp(other) {
             Some(Less) | Some(Equal) => true,
@@ -554,7 +586,6 @@ pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
     /// assert_eq!(result, false);
     /// ```
     #[inline]
-
     fn gt(&self, other: &Rhs) -> bool {
         match self.partial_cmp(other) {
             Some(Greater) => true,
@@ -575,7 +606,6 @@ pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
     /// assert_eq!(result, true);
     /// ```
     #[inline]
-
     fn ge(&self, other: &Rhs) -> bool {
         match self.partial_cmp(other) {
             Some(Greater) | Some(Equal) => true,
@@ -597,7 +627,6 @@ pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
 /// assert_eq!(2, cmp::min(2, 2));
 /// ```
 #[inline]
-
 pub fn min<T: Ord>(v1: T, v2: T) -> T {
     if v1 <= v2 { v1 } else { v2 }
 }
@@ -615,7 +644,6 @@ pub fn min<T: Ord>(v1: T, v2: T) -> T {
 /// assert_eq!(2, cmp::max(2, 2));
 /// ```
 #[inline]
-
 pub fn max<T: Ord>(v1: T, v2: T) -> T {
     if v2 >= v1 { v2 } else { v1 }
 }
@@ -624,9 +652,18 @@ pub fn max<T: Ord>(v1: T, v2: T) -> T {
 mod impls {
     use super::{PartialOrd, Ord, PartialEq, Eq, Ordering};
     use super::Ordering::{Less, Greater, Equal};
-    use super::Sized;
-    use super::Option;
-    use super::Option::{Some, None};
+
+    use option::Option::{self, Some};
+    use marker::Sized;
+
+    // use super::Sized;
+    // use super::Option;
+    // use super::Option::{Some, None};
+
+    // use super::Ordering::{Less, Greater, Equal};
+    // use super::super::*;
+    // use super::*;
+    // use super::super::Option::{Some/*, None*/};
 
     macro_rules! partial_eq_impl {
         ($($t:ty)*) => ($(
@@ -648,8 +685,12 @@ mod impls {
         fn ne(&self, _other: &()) -> bool { false }
     }
 
+    // partial_eq_impl! {
+    //     bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64 f32 f64
+    // }
+
     partial_eq_impl! {
-        bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64 f32 f64
+        bool i32 u8 //char usize u16 u32 u64 isize i8 i16 i64 f32 f64
     }
 
     macro_rules! eq_impl {
@@ -659,7 +700,11 @@ mod impls {
         )*)
     }
 
-    eq_impl! { () bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64 }
+    // eq_impl! { () bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64 }
+
+    eq_impl! {
+        () bool i32 u8 //char usize u16 u32 u64 isize i8 i16 i64
+    }
 
     macro_rules! partial_ord_impl {
         ($($t:ty)*) => ($(
@@ -702,7 +747,7 @@ mod impls {
         }
     }
 
-    partial_ord_impl! { f32 f64 }
+    // partial_ord_impl! { f32 f64 }
 
     macro_rules! ord_impl {
         ($($t:ty)*) => ($(
@@ -748,7 +793,11 @@ mod impls {
         }
     }
 
-    ord_impl! { char usize u8 u16 u32 u64 isize i8 i16 i32 i64 }
+    // ord_impl! { char usize u8 u16 u32 u64 isize i8 i16 i32 i64 }
+
+    ord_impl! {
+        i32 u8 // char usize u16 u32 u64 isize i8 i16 i64 
+    }
 
     // & pointers
 
@@ -830,3 +879,4 @@ mod impls {
         fn ne(&self, other: &&'b B) -> bool { PartialEq::ne(*self, *other) }
     }
 }
+// }

@@ -461,6 +461,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
     }
 
     fn trans_assignment(&mut self, lvalue: &Lvalue<'tcx>, rvalue: &Rvalue<'tcx>, statements: &mut Vec<BinaryenExpressionRef>) {
+        // TODO: rename binaryen_lvalue to dest
         let binaryen_lvalue = self.trans_lval(lvalue);
         let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
 
@@ -491,6 +492,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                 unsafe {
                     // TODO: match on dest_ty.sty to implement binary ops for other types than just i32s
+                    // TODO: check if the dest_layout is sometimes signed or not (CEnum, etc)
                     let op = match *op {
                         BinOp::Add => BinaryenAddInt32(),
                         BinOp::Sub => BinaryenSubInt32(),
@@ -498,6 +500,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         BinOp::Div => BinaryenDivSInt32(),
                         BinOp::Eq => BinaryenEqInt32(),
                         BinOp::Ne => BinaryenNeInt32(),
+                        BinOp::Lt => BinaryenLtSInt32(), // signed
+                        BinOp::Le => BinaryenLeSInt32(), // signed
+                        BinOp::Gt => BinaryenGtSInt32(), // signed
+                        BinOp::Ge => BinaryenGeSInt32(), // signed
                         _ => panic!("unimplemented BinOp: {:?}", op)
                     };
 
@@ -564,31 +570,20 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 }
                             }
 
-                            Layout::CEnum { discr, signed, .. } => {
+                            Layout::CEnum { /*discr,*/ .. } => {
                                 assert_eq!(operands.len(), 0);
                                 if let AggregateKind::Adt(adt_def, variant, _) = *kind {
-                                    let discr_val = adt_def.variants[variant].disr_val.to_u64_unchecked();
-                                    let discr_size = discr.size().bytes() as u32;
+                                    let discr_val = adt_def.variants[variant].disr_val.to_u64_unchecked() as i32;
+                                    // let discr_size = discr.size().bytes() as u32;
 
+                                    // TODO: handle signed vs unsigned here as well, or just in the BinOps ?
                                     // set enum discr
-                                    // TODO: extract the following into the Memory abstraction/fns
                                     unsafe {
-                                        // debug!("emitting Store for CEnum '{:?}' discr: {:?}", adt_def, discr_val);
-                                        // let discr_val = BinaryenConst(self.module, BinaryenLiteralInt64(discr_val as i64));
-                                        // let write_discr = BinaryenStore(self.module, discr_size, 0, 0, self.emit_read_sp(), discr_val);
-                                        // statements.push(write_discr);
-
-                                        debug!("emitting SetLocal for CEnum Assign '{:?} = {:?}'", lvalue, rvalue);
-                                        let discr_val = BinaryenConst(self.module, BinaryenLiteralInt64(discr_val as i64));
+                                        debug!("emitting SetLocal for CEnum Assign '{:?} = {:?}', discr: {:?}", lvalue, rvalue, discr_val);
+                                        let discr_val = BinaryenConst(self.module, BinaryenLiteralInt32(discr_val));
                                         let write_discr = BinaryenSetLocal(self.module, binaryen_lvalue.index, discr_val);
                                         statements.push(write_discr);
                                     }
-
-                                    // if signed {
-                                    //     self.memory.write_int(dest, val as i64, size)?;
-                                    // } else {
-                                    //     self.memory.write_uint(dest, val, size)?;
-                                    // }
                                 } else {
                                     panic!("tried to assign {:?} to Layout::CEnum", kind);
                                 }
@@ -609,6 +604,43 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                     _ => panic!("unimplemented Assign Aggregate {:?}", kind)
                 }
+            }
+
+            Rvalue::Cast (ref kind, ref operand, _) => {
+                match *kind {
+                    CastKind::Misc => {
+                        let src = self.trans_operand(operand);
+                        let src_ty = self.mir.operand_ty(*self.tcx, operand);
+                        let substs = self.tcx.mk_substs(Substs::empty());
+                        let src_layout = self.type_layout_with_substs(src_ty, substs);
+
+                        // TODO: handle more of the casts (miri doesn't really handle every Misc cast either right now)
+                        match (src_layout, &dest_ty.sty) {
+                            (&Layout::Scalar { .. }, &ty::TyUint(_)) |
+                            (&Layout::Scalar { .. }, &ty::TyInt(_))  => {
+                                unsafe {
+                                    // BinaryenExpressionPrint(src);
+                                    // debug!("value {:?}", value);
+                                    // panic!("unimplemented '{:?}' Cast '{:?} = {:?}', for {:?} to {:?}", kind, lvalue, rvalue, src_layout, dest_ty.sty)
+                                    let copy_value = BinaryenSetLocal(self.module, binaryen_lvalue.index, src);
+                                    statements.push(copy_value);
+                                }
+                            }
+                            (&Layout::CEnum { discr, .. }, &ty::TyInt(IntTy::I32)) => {
+                                let discr_size = discr.size().bytes() as u32;
+                                unsafe {
+                                    let read_discr = BinaryenLoad(self.module, discr_size, 0, 0, 0, BinaryenInt32(), src);
+                                    let copy_discr = BinaryenSetLocal(self.module, binaryen_lvalue.index, read_discr);
+                                    statements.push(copy_discr);
+                                }
+                            }
+                            _ => panic!("unimplemented '{:?}' Cast '{:?} = {:?}', for {:?} to {:?}", kind, lvalue, rvalue, src_layout, dest_ty.sty)
+                        }
+                         
+                        // panic!("unimplemented Cast kind {:?} '{:?} = {:?}' - types: {:?}, {:?}, {:?}", kind, lvalue, rvalue, ty, src_ty, src_layout)
+                    }
+                    _ => panic!("unimplemented '{:?}' Cast '{:?} = {:?}'", kind, lvalue, rvalue)
+                }               
             }
 
             _ => panic!("unimplemented Assign '{:?} = {:?}'", lvalue, rvalue)
@@ -821,8 +853,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     self.import_wasm_extern(fn_did, sig);
                                 }
                                 _ => {
+                                    let type_scheme = self.tcx.lookup_item_type(fn_did);
+                                    let is_monomorphic = type_scheme.generics.types.is_empty();
+
                                     let nid = self.tcx.map.as_local_node_id(fn_did).expect("");
-                                    let (nid, substs, sig) = if self.mir_map.map.contains_key(&nid) {
+                                    let (nid, substs, sig) = if self.mir_map.map.contains_key(&nid) && is_monomorphic {
                                         (nid, *substs, sig)
                                     } else {
                                         // only trait methods can have a Self parameter
@@ -842,7 +877,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     let mir = &self.mir_map.map[&nid];
 
                                     fn_sig = monomorphize::apply_param_substs(self.tcx, substs, sig);
-                                    {
+                                    if !self.fun_names.contains_key(&(fn_did, fn_sig.clone())) {
                                         let mut ctxt = BinaryenFnCtxt {
                                             tcx: self.tcx,
                                             mir_map: self.mir_map,
@@ -855,7 +890,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                             c_strings: &mut self.c_strings,
                                         };
 
+                                        debug!("translating monomorphized fn {:?}", operand);                                      
                                         ctxt.trans();
+                                        debug!("done translating monomorphized {:?}", operand);
                                     }
                                 }
                             }
@@ -869,6 +906,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     }
                                 }
                                 _ => {
+                                    // TODO: https://github.com/WebAssembly/design/blob/master/AstSemantics.md#unreachable
                                     debug!("unimplemented diverging fn {:?}", self.fun_names[&(fn_did, fn_sig)]);
                                     return None;
                                 }
