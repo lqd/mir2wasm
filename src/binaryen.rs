@@ -237,6 +237,7 @@ extern {
     pub fn BinaryenHost(module: BinaryenModuleRef, op: BinaryenOp, name: *const c_char, operands: *const BinaryenExpressionRef, numOperands: BinaryenIndex) -> BinaryenExpressionRef;
     pub fn BinaryenNop(module: BinaryenModuleRef) -> BinaryenExpressionRef;
     pub fn BinaryenUnreachable(module: BinaryenModuleRef) -> BinaryenExpressionRef;
+    pub fn BinaryenExpressionPrint(expr: BinaryenExpressionRef);
 
     // Functions
 
@@ -273,6 +274,8 @@ extern {
     pub fn BinaryenModuleWrite(module: BinaryenModuleRef, output: *const c_char, outputSize: size_t) -> size_t;
 
     pub fn BinaryenModuleRead(input: *const c_char, inputSize: size_t) -> BinaryenModuleRef;
+
+    pub fn BinaryenModuleInterpret(module: BinaryenModuleRef);
 
     // CFG / Relooper
 

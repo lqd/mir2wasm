@@ -8,7 +8,9 @@ fn main() {
         let _ = Command::new("git").args(&["submodule", "update", "--init"])
                         .status();
     }
-    let dst = cmake::build("binaryen");
+    let dst = cmake::Config::new("binaryen")
+                 .define("BUILD_STATIC_LIB", "ON")
+                 .build();
 
     println!("cargo:rustc-link-search=native={}/build/lib", dst.display());
     println!("cargo:rustc-link-lib=static=binaryen");
