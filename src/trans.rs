@@ -47,7 +47,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
         assert!(BinaryenModuleValidate(v.module) == 1, "Internal compiler error: invalid generated module");
 
-        // BinaryenModulePrint(v.module);
+        BinaryenModulePrint(v.module);
 
         // TODO: add CLI option to launch the interpreter: --run ?
         BinaryenModuleInterpret(v.module);
@@ -247,7 +247,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         Layout::CEnum { .. } => {
                             debug!("emitting GetLocal for CEnum Switch condition");
                             unsafe {
-                                BinaryenGetLocal(self.module, adt.index, BinaryenInt32())                                
+                                BinaryenGetLocal(self.module, adt.index, BinaryenInt32())
                             }
                         }
                         _ => panic!("unimplemented discrimant value for Layout {:?}", adt_layout)
@@ -624,7 +624,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     debug!("emitting Stores for tuple fields, values: {:?}", operands);
                                     self.emit_assign_fields(offsets, operands, statements);
                                 }
-                                _ => panic!("unimplemented Assign '{:?} = {:?}'", lvalue, rvalue)
+                                _ => panic!("unimplemented Tuple Assign '{:?} = {:?}'", lvalue, rvalue)
                             }
                         }
                     }
@@ -667,7 +667,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     let copy_discr = BinaryenSetLocal(self.module, dest.index, src);
 
                                     // debug!("emitting SetLocal + Load for CEnum Cast Assign '{:?} = {:?}'", lvalue, rvalue);
-                                    // let read_discr = BinaryenLoad(self.module, discr_size, 0, 0, 0, BinaryenInt32(), src);                                    
+                                    // let read_discr = BinaryenLoad(self.module, discr_size, 0, 0, 0, BinaryenInt32(), src);
                                     // let copy_discr = BinaryenSetLocal(self.module, dest.index, read_discr);
                                     statements.push(copy_discr);
                                 }
@@ -883,7 +883,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             let fn_sig;
                             let mut call_kind = BinaryenCallKind::Direct;
 
+                            debug!("\n\n\nFN {:?}\n\n\n", fn_name);
                             match fn_name.as_ref() {
+                                // rust intrinsics
+                                "intrinsics::::discriminant_value" => {
+                                    fn_sig = sig.clone();
+                                    self.generate_rust_intrinsic(fn_did, sig);
+                                }
                                 "wasm::::print_i32" | "wasm::::_print_i32" => {
                                     // extern wasm functions
                                     fn_sig = sig.clone();
@@ -900,7 +906,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                         let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.tcx, fn_did, substs);
                                         let nid = self.tcx.map.as_local_node_id(resolved_def_id).expect("");
                                         let ty = self.tcx.lookup_item_type(resolved_def_id).ty;
-                                        // TODO: investigate rustc trans use of liberate_bound_regions or similar here 
+                                        // TODO: investigate rustc trans use of liberate_bound_regions or similar here
                                         let sig = ty.fn_sig().skip_binder();
 
                                         fn_did = resolved_def_id;
@@ -1057,6 +1063,40 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                               spectest_module,
                               print_fn,
                               print_i32_ty);
+        }
+    }
+
+    fn generate_rust_intrinsic(&mut self, did: DefId, sig: &ty::FnSig<'tcx>) {
+        if self.fun_names.contains_key(&(did, sig.clone())) {
+            return;
+        }
+
+        let discriminant_value_name = CString::new("discriminant_value").expect("");
+        let discriminant_value = discriminant_value_name.as_ptr();
+        self.fun_names.insert((did, sig.clone()), discriminant_value_name.clone());
+
+        let discriminant_value_args = [BinaryenInt32()];
+        unsafe {
+            let discriminant_value_ty = BinaryenAddFunctionType(self.module,
+                                                                discriminant_value,
+                                                                BinaryenInt64(),
+                                                                discriminant_value_args.as_ptr(),
+                                                                BinaryenIndex(1));
+            let mut statements = vec![];
+            // statements.push(BinaryenConst(self.module, BinaryenLiteralInt64(17)));
+            statements.push(BinaryenUnreachable(self.module));
+
+            let body = BinaryenBlock(self.module,
+                                     ptr::null(),
+                                     statements.as_ptr(),
+                                     BinaryenIndex(statements.len() as _));
+
+            BinaryenAddFunction(self.module,
+                                discriminant_value,
+                                discriminant_value_ty,
+                                ptr::null_mut(),
+                                BinaryenIndex(0),
+                                body);
         }
     }
 }
