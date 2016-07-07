@@ -50,7 +50,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         BinaryenModulePrint(v.module);
 
         // TODO: add CLI option to launch the interpreter: --run ?
-        BinaryenModuleInterpret(v.module);
+        // BinaryenModuleInterpret(v.module);
 
         // TODO: add CLI option to save the module to a specified file: -o ?
         // BinaryenModuleWrite(v.module, ...)
@@ -155,7 +155,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             }
         };
 
-        // Create the wasm locals
+        // Create the wasm vars.
+        // Params and vars form the list of locals, both sharing the same index space. 
+        // TODO: rename to vars, 
         let mut locals = Vec::new();
 
         for mir_local in &self.mir.var_decls {
@@ -170,15 +172,16 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             locals.push(binaryen_ret);
         }
 
-        // Function prologue: stack pointer
+        // Function prologue: stack pointer local
         locals.push(BinaryenInt32());
-        let stack_pointer_local = BinaryenIndex(locals.len() as _);
+        let stack_pointer_local = BinaryenIndex((binaryen_args.len() + locals.len() - 1) as u32);
 
-        // relooper helper for irreducible control flow
+        // relooper helper local for irreducible control flow
         locals.push(BinaryenInt32());
-        let relooper_local = BinaryenIndex(locals.len() as _);
+        let relooper_local = BinaryenIndex((binaryen_args.len() + locals.len() - 1) as u32);
 
-        debug!("{} wasm locals found", locals.len());
+        debug!("{} wasm vars found, {} locals total", locals.len(), binaryen_args.len() + locals.len());
+        debug!("stack pointer local is ${}, relooper helper local is ${}", stack_pointer_local.0, relooper_local.0);
 
         // Create the relooper for tying together basic blocks. We're
         // going to first translate the basic blocks without the
@@ -212,6 +215,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     // Emit function epilogue:
                     // TODO: like the prologue, not always necessary
                     unsafe {
+                        debug!("emitting function epilogue, GetLocal({}) + Store", stack_pointer_local.0);
                         let sp = BinaryenConst(self.module, BinaryenLiteralInt32(0));
                         let read_original_sp = BinaryenGetLocal(self.module, stack_pointer_local, BinaryenInt32());
                         let restore_original_sp = BinaryenStore(self.module, 4, 0, 0, sp, read_original_sp);
@@ -238,14 +242,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     let discr_val = match *adt_layout {
                         Layout::General { discr, .. } => {
                             let discr_size = discr.size().bytes() as u32;
-                            debug!("emitting GetLocal + Load for ADT Switch condition");
+                            debug!("emitting GetLocal({}) + Load for ADT Switch condition", adt.index.0);
                             unsafe {
                                 let ptr = BinaryenGetLocal(self.module, adt.index, BinaryenInt32());
                                 BinaryenLoad(self.module, discr_size, 0, 0, 0, BinaryenInt32(), ptr)
                             }
                         }
                         Layout::CEnum { .. } => {
-                            debug!("emitting GetLocal for CEnum Switch condition");
+                            debug!("emitting GetLocal({}) for CEnum Switch condition", adt.index.0);
                             unsafe {
                                 BinaryenGetLocal(self.module, adt.index, BinaryenInt32())
                             }
@@ -285,13 +289,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     // The result of the Rust call is put in MIR into a tmp local,
                                     // but the wasm function returns void (like the print externs)
                                     // TODO: what representation should the unit type have in wasm ?
-                                    debug!("emitting {:?} Call to fn {:?} + SetLocal for unit type", call_kind, func);
+                                    debug!("emitting {:?} Call to fn {:?} + SetLocal({}) for unit type", call_kind, func, lvalue.index.0);
                                     binaryen_stmts.push(b_call);
 
                                     let unit_type = BinaryenConst(self.module, BinaryenLiteralInt32(-1));
                                     binaryen_stmts.push(BinaryenSetLocal(self.module, lvalue.index, unit_type));
                                 } else {
-                                    debug!("emitting {:?} Call to fn {:?} + SetLocal of the result", call_kind, func);
+                                    debug!("emitting {:?} Call to fn {:?} + SetLocal({}) of the result", call_kind, func, lvalue.index.0);
                                     binaryen_stmts.push(BinaryenSetLocal(self.module, lvalue.index, b_call));
                                 }
                             }
@@ -429,6 +433,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
             // Create the function prologue
             // TODO: the epilogue and prologue are not always necessary
+            debug!("emitting function prologue, SetLocal({}) + Load", stack_pointer_local.0);
             let copy_sp = BinaryenSetLocal(self.module, stack_pointer_local, self.emit_read_sp());
             let prologue = RelooperAddBlock(relooper, copy_sp);
 
@@ -476,17 +481,16 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         match *rvalue {
             Rvalue::Use(ref operand) => {
                 let src = self.trans_operand(operand);
-
                 unsafe {
                     let statement = match dest.offset {
                         Some(offset) => {
-                            debug!("emitting Store + GetLocal for Assign Use '{:?} = {:?}'", lvalue, rvalue);
+                            debug!("emitting Store + GetLocal({}) for Assign Use '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                             let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
                             // TODO: match on the dest_ty to know how many bytes to write, not just i32s
                             BinaryenStore(self.module, 4, offset * 8, 0, ptr, src)
                         }
                         None => {
-                            debug!("emitting SetLocal for Assign Use '{:?} = {:?}'", lvalue, rvalue);
+                            debug!("emitting SetLocal({}) for Assign Use '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                             BinaryenSetLocal(self.module, dest.index, src)
                         }
                     };
@@ -515,9 +519,20 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         _ => panic!("unimplemented BinOp: {:?}", op)
                     };
 
-                    debug!("emitting SetLocal for Assign BinaryOp '{:?} = {:?}'", lvalue, rvalue);
                     let op = BinaryenBinary(self.module, op, left, right);
-                    statements.push(BinaryenSetLocal(self.module, dest.index, op));
+                    let statement = match dest.offset {
+                        Some(offset) => {
+                            debug!("emitting Store + GetLocal({}) for Assign BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
+                            let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
+                            // TODO: match on the dest_ty to know how many bytes to write, not just i32s
+                            BinaryenStore(self.module, 4, offset * 8, 0, ptr, op)
+                        }
+                        None => {
+                            debug!("emitting SetLocal({}) for Assign BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
+                            BinaryenSetLocal(self.module, dest.index, op)
+                        }
+                    };
+                    statements.push(statement);
                 }
             }
 
@@ -526,7 +541,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 // TODO: works for refs to "our stack", but not the locals on the wasm stack yet
                 let expr = self.trans_operand(&Operand::Consume(lvalue.clone()));
                 unsafe {
-                    debug!("emitting SetLocal for Assign Ref '{:?} = {:?}'", lvalue, rvalue);
+                    debug!("emitting SetLocal({}) for Assign Ref '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                     let expr = BinaryenSetLocal(self.module, dest.index, expr);
                     statements.push(expr);
                 }
@@ -592,7 +607,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     // TODO: handle signed vs unsigned here as well, or just in the BinOps ?
                                     // set enum discr
                                     unsafe {
-                                        debug!("emitting SetLocal for CEnum Assign '{:?} = {:?}', discr: {:?}", lvalue, rvalue, discr_val);
+                                        debug!("emitting SetLocal({}) for CEnum Assign '{:?} = {:?}', discr: {:?}", dest.index.0, lvalue, rvalue, discr_val);
                                         let discr_val = BinaryenConst(self.module, BinaryenLiteralInt32(discr_val));
                                         let write_discr = BinaryenSetLocal(self.module, dest.index, discr_val);
 
@@ -654,7 +669,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     // BinaryenExpressionPrint(src);
                                     // debug!("value {:?}", value);
                                     // panic!("unimplemented '{:?}' Cast '{:?} = {:?}', for {:?} to {:?}", kind, lvalue, rvalue, src_layout, dest_ty.sty)
-                                    debug!("emitting SetLocal for Scalar Cast Assign '{:?} = {:?}'", lvalue, rvalue);
+                                    debug!("emitting SetLocal({}) for Scalar Cast Assign '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                                     let copy_value = BinaryenSetLocal(self.module, dest.index, src);
                                     statements.push(copy_value);
                                 }
@@ -663,7 +678,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             (&Layout::CEnum { /* discr, */ .. }, &ty::TyUint(_)) => {
                                 // let discr_size = discr.size().bytes() as u32;
                                 unsafe {
-                                    debug!("emitting SetLocal for CEnum Cast Assign '{:?} = {:?}'", lvalue, rvalue);
+                                    debug!("emitting SetLocal({}) for CEnum Cast Assign '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                                     let copy_discr = BinaryenSetLocal(self.module, dest.index, src);
 
                                     // debug!("emitting SetLocal + Load for CEnum Cast Assign '{:?} = {:?}'", lvalue, rvalue);
@@ -801,7 +816,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 unsafe {
                     match binaryen_lvalue.offset {
                         Some(offset) => {
-                            debug!("emitting GetLocal + Load for '{:?}'", lvalue);
+                            debug!("emitting GetLocal({}) + Load for '{:?}'", binaryen_lvalue.index.0, lvalue);
                             let ptr = BinaryenGetLocal(self.module, binaryen_lvalue.index, t);
                             // TODO: match on the field ty to know how many bytes to read, not just i32s
                             BinaryenLoad(self.module, 4, 0, offset * 8, 0, BinaryenInt32(), ptr)
@@ -826,13 +841,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     BinaryenConst(self.module, lit)
                                 }
                             }
-                            ConstVal::Integral(ConstInt::Isize(ConstIsize::Is64(val))) |
-                            ConstVal::Integral(ConstInt::I64(val)) => {
-                                unsafe {
-                                    let lit = BinaryenLiteralInt64(val);
-                                    BinaryenConst(self.module, lit)
-                                }
-                            }
+                            // ConstVal::Integral(ConstInt::Isize(ConstIsize::Is64(val))) |
+                            // ConstVal::Integral(ConstInt::I64(val)) => {
+                            //     unsafe {
+                            //         let lit = BinaryenLiteralInt64(val);
+                            //         BinaryenConst(self.module, lit)
+                            //     }
+                            // }
                             ConstVal::Bool (val) => {
                                 let val = if val { 1 } else { 0 };
                                 unsafe {
@@ -883,7 +898,6 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             let fn_sig;
                             let mut call_kind = BinaryenCallKind::Direct;
 
-                            debug!("\n\n\nFN {:?}\n\n\n", fn_name);
                             match fn_name.as_ref() {
                                 // rust intrinsics
                                 "intrinsics::::discriminant_value" => {
@@ -1077,9 +1091,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
         let discriminant_value_args = [BinaryenInt32()];
         unsafe {
+            // let discriminant_value_ty = BinaryenAddFunctionType(self.module,
+            //                                                     discriminant_value,
+            //                                                     BinaryenInt64(),
+            //                                                     discriminant_value_args.as_ptr(),
+            //                                                     BinaryenIndex(1));
             let discriminant_value_ty = BinaryenAddFunctionType(self.module,
                                                                 discriminant_value,
-                                                                BinaryenInt64(),
+                                                                BinaryenInt32(),
                                                                 discriminant_value_args.as_ptr(),
                                                                 BinaryenIndex(1));
             let mut statements = vec![];
@@ -1111,7 +1130,7 @@ fn rust_ty_to_binaryen<'tcx>(t: Ty<'tcx>) -> BinaryenType {
             BinaryenFloat64()
         },
         ty::TyInt(IntTy::I64) | ty::TyUint(UintTy::U64) => {
-            BinaryenInt64()
+            panic!()//BinaryenInt64()
         }
         _ => {
             BinaryenInt32()
