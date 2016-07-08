@@ -50,7 +50,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         BinaryenModulePrint(v.module);
 
         // TODO: add CLI option to launch the interpreter: --run ?
-        // BinaryenModuleInterpret(v.module);
+        BinaryenModuleInterpret(v.module);
 
         // TODO: add CLI option to save the module to a specified file: -o ?
         // BinaryenModuleWrite(v.module, ...)
@@ -140,11 +140,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
         // Translate arg and ret tys to wasm
         let binaryen_args: Vec<_> = self.sig.inputs.iter().map(|t| rust_ty_to_binaryen(t)).collect();
-        let mut needs_ret_local = false;
+        let mut needs_ret_var = false;
         let binaryen_ret = match self.sig.output {
             ty::FnOutput::FnConverging(t) => {
                 if !t.is_nil() {
-                    needs_ret_local = true;
+                    needs_ret_var = true;
                     rust_ty_to_binaryen(t)
                 } else {
                     BinaryenNone()
@@ -156,32 +156,32 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         };
 
         // Create the wasm vars.
-        // Params and vars form the list of locals, both sharing the same index space. 
-        // TODO: rename to vars, 
-        let mut locals = Vec::new();
+        // Params and vars form the list of locals, both sharing the same index space.
+        let mut vars = Vec::new();
 
-        for mir_local in &self.mir.var_decls {
-            locals.push(rust_ty_to_binaryen(mir_local.ty));
+        for mir_var in &self.mir.var_decls {
+            vars.push(rust_ty_to_binaryen(mir_var.ty));
         }
 
-        for mir_local in &self.mir.temp_decls {
-            locals.push(rust_ty_to_binaryen(mir_local.ty));
+        for mir_var in &self.mir.temp_decls {
+            vars.push(rust_ty_to_binaryen(mir_var.ty));
         }
 
-        if needs_ret_local {
-            locals.push(binaryen_ret);
+        if needs_ret_var {
+            vars.push(binaryen_ret);
         }
 
         // Function prologue: stack pointer local
-        locals.push(BinaryenInt32());
-        let stack_pointer_local = BinaryenIndex((binaryen_args.len() + locals.len() - 1) as u32);
+        vars.push(BinaryenInt32());
+        let stack_pointer_local = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
 
         // relooper helper local for irreducible control flow
-        locals.push(BinaryenInt32());
-        let relooper_local = BinaryenIndex((binaryen_args.len() + locals.len() - 1) as u32);
+        vars.push(BinaryenInt32());
+        let relooper_local = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
 
-        debug!("{} wasm vars found, {} locals total", locals.len(), binaryen_args.len() + locals.len());
-        debug!("stack pointer local is ${}, relooper helper local is ${}", stack_pointer_local.0, relooper_local.0);
+        let locals_count = binaryen_args.len() + vars.len();
+        debug!("{} wasm locals found: {} params, {} vars (incl. stack pointer ${}, relooper helper ${})",
+            locals_count, binaryen_args.len(), vars.len(), stack_pointer_local.0, relooper_local.0);
 
         // Create the relooper for tying together basic blocks. We're
         // going to first translate the basic blocks without the
@@ -450,8 +450,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
             BinaryenAddFunction(self.module, fn_name_ptr,
                                 *self.fun_types.get(self.sig).unwrap(),
-                                locals.as_ptr(),
-                                BinaryenIndex(locals.len() as _),
+                                vars.as_ptr(),
+                                BinaryenIndex(vars.len() as _),
                                 body);
 
             let nid = self.tcx.map.as_local_node_id(self.did).expect("");
@@ -476,7 +476,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
 
         let dest_layout = self.type_layout_with_substs(dest_ty, self.tcx.mk_substs(Substs::empty()));
-        debug!("trans_assignment '{:?} = {:?}' to dest_ty {:?}, dest_layout {:?}", lvalue, rvalue, dest_ty, dest_layout);
+        // debug!("trans_assignment '{:?} = {:?}' to dest_ty {:?}, dest_layout {:?}", lvalue, rvalue, dest_ty, dest_layout);
 
         match *rvalue {
             Rvalue::Use(ref operand) => {
@@ -559,7 +559,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         match *dest_layout {
                             Layout::Univariant { ref variant, .. } => {
                                 // NOTE: use the variant's min_size and alignment for dest_size ?
-                                debug!("allocating struct '{:?}' in linear memory, size: {:?} bytes ", adt_def, dest_size);
+                                debug!("allocating struct '{:?}' in linear memory to SetLocal({}), size: {:?} bytes ", adt_def, dest.index.0, dest_size);
                                 let allocation = self.emit_alloca(dest.index, dest_size);
                                 statements.push(allocation);
 
@@ -573,7 +573,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     let discr_val = adt_def.variants[variant].disr_val.to_u32().unwrap();
                                     let discr_size = discr.size().bytes() as u32;
 
-                                    debug!("allocating Enum '{:?}' in linear memory, size: {:?} bytes", adt_def, dest_size);
+                                    debug!("allocating Enum '{:?}' in linear memory to SetLocal({}), size: {:?} bytes", adt_def, dest.index.0, dest_size);
                                     let allocation = self.emit_alloca(dest.index, dest_size);
                                     statements.push(allocation);
 
@@ -631,7 +631,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 Layout::Univariant { ref variant, .. } => {
                                     let dest_size = self.type_size_with_substs(dest_ty, self.tcx.mk_substs(Substs::empty())) as i32 * 8;
                                     // NOTE: use the variant's min_size and alignment for dest_size ?
-                                    debug!("allocating tuple in linear memory, size: {:?} bytes", dest_size);
+                                    debug!("allocating tuple in linear memory to SetLocal({}), size: {:?} bytes", dest.index.0, dest_size);
                                     let allocation = self.emit_alloca(dest.index, dest_size);
                                     statements.push(allocation);
 
@@ -1138,6 +1138,7 @@ fn rust_ty_to_binaryen<'tcx>(t: Ty<'tcx>) -> BinaryenType {
     }
 }
 
+// TODO: sanitize parentheses as well
 fn sanitize_symbol(s: &str) -> String {
     s.chars().map(|c| {
         match c {
