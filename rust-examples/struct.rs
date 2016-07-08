@@ -7,25 +7,37 @@ struct Rectangle {
     h: i32,
 }
 
-impl Rectangle {
-    fn area(&self) -> i32 {
-        self.w * self.h
-    }
-}
+// impl Rectangle {
+//     // fn area(&self) -> i32 {
+//     //     self.w * self.h
+//     // }
+
+//     fn dump(&self) {
+//         wasm::print_i32(self.w);
+//     }
+// }
 
 use clone::Clone;
 
 #[main]
 fn main() {
     let mut r = Rectangle {w: 2, h: 5};
-    wasm::print_i32(r.area()); // (i32.const 10)
+    // // wasm::print_i32(r.area()); // (i32.const 10)
 
-    r.w = 3;
-    wasm::print_i32(r.area()); // (i32.const 15)
+    // // r.w = 3;
+    // // wasm::print_i32(r.area()); // (i32.const 15)
+
+    // r.dump();
 
     let mut r = r.clone();
-    r.w = 4;
-    wasm::print_i32(r.area()); // (i32.const 20)
+    // r.dump();
+
+    wasm::print_i32(r.w);
+    // wasm::print_i32(r.h);
+    // r.w = 4;
+    // wasm::print_i32(r.w);
+    // wasm::print_i32(r.h);
+    // // wasm::print_i32(r.area()); // (i32.const 20)
 }
 
 pub mod marker {
@@ -46,6 +58,7 @@ pub mod clone {
         fn clone(&self) -> Self;
     }
 
+    // probably shouldn't have to trans this
     pub fn assert_receiver_is_clone<T: Clone + ?Sized>(_: &T) {}
 
     macro_rules! clone_impl {
@@ -61,16 +74,16 @@ pub mod clone {
     clone_impl! { i32 }
 }
 
-#[lang = "mul"]
-pub trait Mul<RHS=Self> {
-    type Output;
-    fn mul(self, rhs: RHS) -> Self::Output;
-}
+// #[lang = "mul"]
+// pub trait Mul<RHS=Self> {
+//     type Output;
+//     fn mul(self, rhs: RHS) -> Self::Output;
+// }
 
-impl Mul for i32 {
-    type Output = i32;
-    fn mul(self, rhs: i32) -> Self::Output { self * rhs }
-}
+// impl Mul for i32 {
+//     type Output = i32;
+//     fn mul(self, rhs: i32) -> Self::Output { self * rhs }
+// }
 
 // access to the wasm "spectest" module test printing functions
 mod wasm {
