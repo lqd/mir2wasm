@@ -136,7 +136,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         } else {
             let fn_name = sanitize_symbol(&self.tcx.item_path_str(self.did));
             let fn_name = CString::new(fn_name).expect("");
-            debug!("recording fn {:?} as seen: {:?} {:?}", fn_name, self.did, self.sig.clone());
+            debug!("recording fn {:?} as translated", fn_name);
             fn_name_ptr = fn_name.as_ptr();
             self.fun_names.insert((self.did, self.sig.clone()), fn_name);
         }
@@ -323,8 +323,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                             // FIXME: stupidly inefficient, so minimize the number of copies of the dest_size bytes soo
                                             //       right now copy byte by byte
                                             // TODO: handle all sizes, alignment, etc
+
                                             let ptr = BinaryenGetLocal(self.module, tmp_dest, BinaryenInt32());
-                                            let sp = self.emit_read_sp(); // TODO: could be set to a local as well
+                                            // TODO: the sp read could be set to a local to not have 2 instrs
+                                            let sp = self.emit_read_sp();
                                             for i in 0..dest_size_bytes {
                                                 let offset = i as u32 * 8;
                                                 debug!("emitting Store {}, size: 1, offset: {}", i, offset);
@@ -967,7 +969,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     if *sig != fn_sig {
                                         let fn_name = sanitize_symbol(&self.tcx.item_path_str(fn_did));
                                         let fn_name = CString::new(fn_name).expect("");
-                                        debug!("recording fn {:?} as seen: {:?} {:?}", fn_name, fn_did, sig.clone());
+                                        debug!("recording fn {:?} as translated", fn_name);
                                         self.fun_names.insert((fn_did, sig.clone()), fn_name);
                                     }
 
