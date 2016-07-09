@@ -1,4 +1,4 @@
-#![feature(intrinsics, lang_items, main, no_core, fundamental)]
+#![feature(intrinsics, lang_items, no_core, fundamental)]
 #![no_core]
 #![allow(unused_variables)]
 
@@ -110,22 +110,10 @@ impl PartialEq for isize {
     fn ne(&self, other: &isize) -> bool { (*self) != (*other) }
 }
 
-// access to the wasm "spectest" module test printing functions
-mod wasm {
-    pub fn print_i32(i: isize) {
-        unsafe { _print_i32(i); }
-    }
-
-    extern {
-        fn _print_i32(i: isize);
-    }
-}
-
 fn test(i: isize) -> isize {
     ((i + 3) * 2 - 2) / 3
 }
 
-#[main]
 fn main() {
     let mut i = 0;
     i += 3;
@@ -135,5 +123,4 @@ fn main() {
     let j = i == 1;
 
     let result = test(i);
-    wasm::print_i32(result); // (i32.const 2)
 }

@@ -1,5 +1,7 @@
 #![feature(intrinsics, lang_items, main, no_core, fundamental)]
 #![no_core]
+#![allow(dead_code)]
+#![allow(unused_variables)]
 
 #[derive(Clone, Copy)]
 struct Rectangle {
@@ -18,14 +20,10 @@ fn main() {
     use clone::Clone;
 
     let mut r = Rectangle {w: 2, h: 5};
-    wasm::print_i32(r.area()); // (i32.const 10)
-
     r.w = 3;
-    wasm::print_i32(r.area()); // (i32.const 15)
 
     let mut r = r.clone();
     r.w = 4;
-    wasm::print_i32(r.area()); // (i32.const 20)
 }
 
 pub mod marker {
@@ -46,7 +44,7 @@ pub mod clone {
         fn clone(&self) -> Self;
     }
 
-    // should this #[derive] requirement exist and have to be translated in our case ?
+    // should this #[derive] requirement exists and have to be translated in our case ?
     pub fn assert_receiver_is_clone<T: Clone + ?Sized>(_: &T) {}
 
     macro_rules! clone_impl {
@@ -71,15 +69,4 @@ pub trait Mul<RHS=Self> {
 impl Mul for i32 {
     type Output = i32;
     fn mul(self, rhs: i32) -> Self::Output { self * rhs }
-}
-
-// access to the wasm "spectest" module test printing functions
-mod wasm {
-    pub fn print_i32(i: i32) {
-        unsafe { _print_i32(i); }
-    }
-
-    extern {
-        fn _print_i32(i: i32);
-    }
 }

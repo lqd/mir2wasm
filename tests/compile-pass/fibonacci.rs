@@ -1,5 +1,55 @@
 #![feature(intrinsics, lang_items, main, no_core, fundamental)]
 #![no_core]
+#![allow(unused_variables)]
+
+fn fibonacci_recursive(n: i32) -> i32 {
+    if n == 0 || n == 1 {
+        n
+    } else {
+        fibonacci_recursive(n - 1) + fibonacci_recursive(n - 2)
+    }
+}
+
+fn fibonacci_iterative(n: i32) -> i32 {
+    let mut current = 0;
+    let mut next = 1;
+
+    let mut iterator = 0;
+    loop {
+        if iterator == n {
+            break;
+        }
+
+        let tmp = current + next;
+        current = next;
+        next = tmp;
+
+        iterator += 1;
+    }
+
+    current
+}
+
+// Unusual example just to test trait methods
+trait Fibonacci {
+    fn fibonacci(&self) -> Self;
+}
+
+impl Fibonacci for i32 {
+    fn fibonacci(&self) -> i32 {
+        fibonacci_iterative(*self)
+    }
+}
+
+fn main() {
+    let result = fibonacci_recursive(10);
+    let result = fibonacci_iterative(25);
+    let result = fibonacci_recursive(25);
+
+    // trait example
+    let nth = 20;
+    let result = nth.fibonacci();
+}
 
 #[lang = "sized"]
 #[fundamental]
@@ -55,75 +105,4 @@ pub trait AddAssign<Rhs=Self> {
 impl AddAssign for i32 {
     #[inline]
     fn add_assign(&mut self, other: i32) { *self += other }
-}
-
-fn fibonacci_recursive(n: i32) -> i32 {
-    if n == 0 || n == 1 {
-        n
-    } else {
-        fibonacci_recursive(n - 1) + fibonacci_recursive(n - 2)
-    }
-}
-
-fn fibonacci_iterative(n: i32) -> i32 {
-    let mut current = 0;
-    let mut next = 1;
-
-    let mut iterator = 0;
-    loop {
-        if iterator == n {
-            break;
-        }
-
-        let tmp = current + next;
-        current = next;
-        next = tmp;
-
-        iterator += 1;
-    }
-
-    current
-}
-
-// access to the wasm "spectest" module test printing functions
-mod wasm {
-    pub fn print_i32(i: i32) {
-        unsafe { _print_i32(i); }
-    }
-
-    extern {
-        fn _print_i32(i: i32);
-    }
-}
-
-// Unusual example just to test trait methods
-trait Fibonacci {
-    fn fibonacci(&self) -> Self;
-}
-
-impl Fibonacci for i32 {
-    fn fibonacci(&self) -> i32 {
-        fibonacci_iterative(*self)
-    }
-}
-
-#[main]
-fn main() {
-    let result = fibonacci_recursive(10);
-    wasm::print_i32(result); // (i32.const 55)
-
-    let result = fibonacci_iterative(25);
-    wasm::print_i32(result); // (i32.const 75025)
-
-    let result = fibonacci_recursive(25);
-    wasm::print_i32(result); // a slower (i32.const 75025)
-
-    // trait example
-    let nth = 20;
-    let result = nth.fibonacci();
-    wasm::print_i32(result); // (i32.const 6765)
-
-    // the following two, however, create 'promoted' blocks, which are not yet implemented
-    // let result = Fibonacci::fibonacci(&10);
-    // let result = 10.fibonacci();
 }

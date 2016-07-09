@@ -24,16 +24,6 @@ pub mod ops {
         type Output = i32;
         fn add(self, rhs: i32) -> Self::Output { self + rhs }
     }
-
-    #[lang = "add_assign"]
-    pub trait AddAssign<Rhs=Self> {
-        fn add_assign(&mut self, Rhs);
-    }
-
-    impl AddAssign for i32 {
-        #[inline]
-        fn add_assign(&mut self, other: i32) { *self += other }
-    }
 }
 
 pub mod iter {
@@ -78,7 +68,7 @@ pub mod iter {
             self.idx = self.idx + 1;
             Some(result)
         }
-    }   
+    }
 }
 
 mod cmp {

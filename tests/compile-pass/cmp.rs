@@ -1,50 +1,29 @@
-#![feature(lang_items, no_core, main, fundamental, intrinsics)]
+#![feature(lang_items, no_core, fundamental, intrinsics)]
 #![no_core]
+#![allow(unused_variables)]
 
-#[main]
 fn main() {
     let x: i32 = 0;
     let y: i32 = 1;
 
-    // (i32.const 0)
-    wasm::print_i32((x == y) as i32);
-    wasm::print_i32((x.eq(&y)) as i32);
+    let result = (x == y) as i32;
+    let result = (x.eq(&y)) as i32;
 
-    // (i32.const 1)
-    wasm::print_i32((x != y) as i32);
-    wasm::print_i32((x.ne(&y)) as i32);
+    let result = (x != y) as i32;
+    let result = (x.ne(&y)) as i32;
 
-    // (i32.const 1)
-    wasm::print_i32((x < y) as i32);
-    wasm::print_i32((x.lt(&y)) as i32);
+    let result = (x < y) as i32;
+    let result = (x.lt(&y)) as i32;
 
-    // (i32.const 1)
-    wasm::print_i32((x <= y) as i32);
-    wasm::print_i32((x.le(&y)) as i32);
+    let result = (x <= y) as i32;
+    let result = (x.le(&y)) as i32;
 
-    // (i32.const 0)
-    wasm::print_i32((x > y) as i32);
-    wasm::print_i32((x.gt(&y)) as i32);
+    let result = (x > y) as i32;
+    let result = (x.gt(&y)) as i32;
 
-    // (i32.const 0)
-    wasm::print_i32((x >= y) as i32);
-    wasm::print_i32((x.ge(&y)) as i32);
+    let result = (x >= y) as i32;
+    let result = (x.ge(&y)) as i32;
 }
-
-#[cold] #[inline(never)] // this is the slow path, always
-#[lang = "panic"]
-pub fn panic(_: &(&'static str, &'static str, u32)) -> ! {
-    // Use Arguments::new_v1 instead of format_args!("{}", expr) to potentially
-    // reduce size overhead. The format_args! macro uses str's Display trait to
-    // write expr, which calls Formatter::pad, which must accommodate string
-    // truncation and padding (even though none is used here). Using
-    // Arguments::new_v1 may allow the compiler to omit Formatter::pad from the
-    // output binary, saving up to a few kilobytes.
-    // let (expr, file, line) = *expr_file_line;
-    panic_fmt()
-}
-
-#[lang = "panic_fmt"] fn panic_fmt() -> ! { loop {} }
 
 pub mod marker {
     use clone::Clone;
@@ -62,36 +41,21 @@ use cmp::*;
 pub mod clone {
     use marker::Sized;
 
-    pub trait Clone : Sized {
-        fn clone(&self) -> Self;
-    }
+    pub trait Clone : Sized {}
 }
 
-// pub trait Hash { }
-
 mod option {
-    // #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord/*, Debug, Hash*/)]
-    #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord/*, Debug, Hash*/)]
     pub enum Option<T> {
-        /// No value
         None,
-        /// Some value `T`
         Some(T)
     }
 }
 
-pub mod intrinsics {
-    extern "rust-intrinsic" {
-        /// Returns the value of the discriminant for the variant in 'v',
-        /// cast to a `u64`; if `T` has no discriminant, returns 0.
-        pub fn discriminant_value<T>(v: &T) -> u64;
-    }
-}
-
 pub mod cmp {
-    use marker::Sized;
+    use marker::*;
     use option::Option::{self, Some};
     use self::Ordering::*;
+    use clone::Clone;
 
     #[lang = "eq"]
     pub trait PartialEq<Rhs: ?Sized = Self> {
@@ -107,7 +71,6 @@ pub mod cmp {
         fn assert_receiver_is_total_eq(&self) {}
     }
 
-    #[derive(Clone, Copy, PartialEq, /*Debug, Hash*/)]
     pub enum Ordering {
         Less = -1,
         Equal = 0,
@@ -147,6 +110,15 @@ pub mod cmp {
             (*self as i32).cmp(&(*other as i32))
         }
     }
+
+    impl<Rhs> PartialEq<Rhs> for Ordering {
+        fn eq(&self, other: &Rhs) -> bool {
+            self == other
+        }
+    }
+
+    impl Clone for Ordering {}
+    impl Copy for Ordering {}
 
     impl PartialOrd for Ordering {
         #[inline]
@@ -200,15 +172,6 @@ pub mod cmp {
         use option::Option::{self, Some};
         use marker::Sized;
 
-        // use super::Sized;
-        // use super::Option;
-        // use super::Option::{Some, None};
-
-        // use super::Ordering::{Less, Greater, Equal};
-        // use super::super::*;
-        // use super::*;
-        // use super::super::Option::{Some/*, None*/};
-
         macro_rules! partial_eq_impl {
             ($($t:ty)*) => ($(
 
@@ -221,17 +184,12 @@ pub mod cmp {
             )*)
         }
 
-
         impl PartialEq for () {
             #[inline]
             fn eq(&self, _other: &()) -> bool { true }
             #[inline]
             fn ne(&self, _other: &()) -> bool { false }
         }
-
-        // partial_eq_impl! {
-        //     bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64 f32 f64
-        // }
 
         partial_eq_impl! {
             bool i32 u8 isize //char usize u16 u32 u64 i8 i16 i64 f32 f64
@@ -243,8 +201,6 @@ pub mod cmp {
                 impl Eq for $t {}
             )*)
         }
-
-        // eq_impl! { () bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64 }
 
         eq_impl! {
             () bool i32 u8 isize //char usize u16 u32 u64 i8 i16 i64
@@ -291,8 +247,6 @@ pub mod cmp {
             }
         }
 
-        // partial_ord_impl! { f32 f64 }
-
         macro_rules! ord_impl {
             ($($t:ty)*) => ($(
 
@@ -336,8 +290,6 @@ pub mod cmp {
                 (*self as u8).cmp(&(*other as u8))
             }
         }
-
-        // ord_impl! { char usize u8 u16 u32 u64 isize i8 i16 i32 i64 }
 
         ord_impl! {
             i32 u8 isize // char usize u16 u32 u64 i8 i16 i64
@@ -424,26 +376,3 @@ pub mod cmp {
         }
     }
 }
-
-// access to the wasm "spectest" module test printing functions
-mod wasm {
-    pub fn print_i32(i: i32) {
-        unsafe { _print_i32(i); }
-    }
-
-    extern {
-        fn _print_i32(i: i32);
-    }
-}
-
-// mod intrinsics {
-// use self::Ordering::*;
-// use super::Option::{self, Some};
-
-// impl Clone for Ordering {}
-// impl Copy for Ordering {}
-// impl<Rhs> PartialEq<Rhs> for Ordering {
-//     fn eq(&self, other: &Rhs) -> bool {
-//         self == other
-//     }
-// }
