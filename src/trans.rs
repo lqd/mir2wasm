@@ -219,7 +219,6 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 TerminatorKind::Return => {
                     // Emit function epilogue:
                     // TODO: like the prologue, not always necessary
-                    // TODO: if returning a struct, emit a Store the the top of the frame
                     unsafe {
                         debug!("emitting function epilogue, GetLocal({}) + Store", stack_pointer_local.0);
                         let read_original_sp = BinaryenGetLocal(self.module, stack_pointer_local, BinaryenInt32());
@@ -267,6 +266,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 TerminatorKind::Call {
                     ref func, ref args, ref destination, ..
                 } => unsafe {
+                    // NOTE: plan for the calling convention: i32/i64 f32/f64 are to be passed using the wasm stack and function parameters.
+                    //       For the other types, the manual stack in linear memory will be used, and pointers into this stack
+                    //       passed as i32s. A call to a function returning a struct will require preparing the output return value space on
+                    //       the caller function's frame, and the called function will write its return value there to avoid memcpys
                     if let Some((b_func, b_fnty, call_kind)) = self.trans_fn_name_direct(func) {
                         let b_args: Vec<_> = args.iter().map(|a| self.trans_operand(a)).collect();
                         let b_call = match call_kind {
@@ -304,44 +307,53 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     let substs = self.tcx.mk_substs(Substs::empty());
                                     let dest_layout = self.type_layout_with_substs(dest_ty, substs);
 
-                                    let dest_size_bytes = self.type_size_with_substs(dest_ty, substs) as i32;
-                                    let dest_size = dest_size_bytes * 8;
                                     match *dest_layout {
                                         Layout::Univariant { .. } | Layout::General { .. } => {
-                                            // TODO: if the returned value is at the top of the previous frame we can avoid a copy
-                                            // TODO: if the calling function passes a pointer to where the callee should store
-                                            //       the returned struct we can avoid all copies, which requires adding a param to wasm signatures
-                                            // plan for calling convention: i32/i64 f32/f64 are passed using the wasm stack and function parameters
-                                            // for other types, the linear memory is used, in a manual stack representation, and pointers into this stack
-                                            // are passed as i32s. A function calling another function which returns a struct, will prepare the
-                                            // output return value on its frame, and the called function will write its return value at the top of
-                                            // the frame, to avoid memcpys (and without having to change function signatures)
+                                            let dest_size = self.type_size_with_substs(dest_ty, substs) as i32 * 8;
+
+                                            // TODO: implement the calling convention for functions returning non-primitive types
+                                            // FIXME: until then emit a memcpy, which is inefficient but works for now
                                             vars.push(BinaryenInt32());
                                             let tmp_dest = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
 
-                                            debug!("emitting {:?} Call to fn {:?} + SetLocal({}) of the result pointer", call_kind, func, tmp_dest.0);
+                                            debug!("tmp - emitting {:?} Call to fn {:?} + SetLocal({}) of the result pointer", call_kind, func, tmp_dest.0);
                                             binaryen_stmts.push(BinaryenSetLocal(self.module, tmp_dest, b_call));
 
-                                            debug!("allocating return value in linear memory to SetLocal({}), size: {:?}", dest.index.0, dest_size);
+                                            debug!("tmp - allocating return value in linear memory to SetLocal({}), size: {:?}", dest.index.0, dest_size);
                                             let allocation = self.emit_alloca(dest.index, dest_size);
                                             binaryen_stmts.push(allocation);
 
-                                            // TODO: remove this, prepare the stack for the returned struct value
-                                            // the poor man's memcpy
-                                            debug!("emitting Stores to copy result to stack frame");
-                                            // FIXME: stupidly inefficient, so minimize the number of copies of the dest_size bytes soo
-                                            //       right now copy byte by byte
-                                            // TODO: handle all sizes, alignment, etc
-
+                                            // TMP - the poor man's memcpy
+                                            debug!("tmp - emitting Stores to copy result to stack frame");
                                             let ptr = BinaryenGetLocal(self.module, tmp_dest, BinaryenInt32());
-                                            // TODO: the sp read could be set to a local to not have 2 instrs
                                             let sp = self.emit_read_sp();
-                                            for i in 0..dest_size_bytes {
-                                                let offset = i as u32 * 8;
-                                                debug!("emitting Store {}, size: 1, offset: {}", i, offset);
-                                                let read_byte = BinaryenLoad(self.module, 1, 0, offset, 0, BinaryenInt32(), ptr);
-                                                let copy_byte = BinaryenStore(self.module, 1, offset, 0, sp, read_byte);
-                                                binaryen_stmts.push(copy_byte);
+                                            let mut bytes_to_copy = dest_size;
+                                            let mut offset = 0;
+                                            while bytes_to_copy > 0 {
+                                                let size = if bytes_to_copy >= 64 {
+                                                    8
+                                                } else if bytes_to_copy >= 32 {
+                                                    4
+                                                } else if bytes_to_copy >= 16 {
+                                                    2
+                                                } else {
+                                                    1
+                                                };
+
+                                                let ty = if size == 8 {
+                                                    BinaryenInt64()
+                                                } else {
+                                                    BinaryenInt32()
+                                                };
+
+                                                debug!("tmp - emitting Store copy, size: {}, offset: {}", size, offset);
+                                                let read_bytes = BinaryenLoad(self.module, size, 0, offset, 0, ty, ptr);
+                                                let copy_bytes = BinaryenStore(self.module, size, offset, 0, sp, read_bytes);
+                                                binaryen_stmts.push(copy_bytes);
+
+                                                let size = size * 8;
+                                                bytes_to_copy -= size as i32;
+                                                offset += size;
                                             }
                                         }
 
