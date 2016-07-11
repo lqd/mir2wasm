@@ -47,10 +47,10 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
         assert!(BinaryenModuleValidate(v.module) == 1, "Internal compiler error: invalid generated module");
 
-        BinaryenModulePrint(v.module);
+        // BinaryenModulePrint(v.module);
 
         // TODO: add CLI option to launch the interpreter: --run ?
-        // BinaryenModuleInterpret(v.module);
+        BinaryenModuleInterpret(v.module);
 
         // TODO: add CLI option to save the module to a specified file: -o ?
         // BinaryenModuleWrite(v.module, ...)
@@ -263,6 +263,27 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                     block_kind = BinaryenBlockKind::Switch(discr_val);
                 }
+                TerminatorKind::SwitchInt { ref discr, .. } => {
+                    let discr_val = self.trans_lval(discr);
+
+                    if discr_val.offset.is_some() {
+                        panic!("unimplemented SwitchInt with offset");
+                    }
+
+                    let discr_ty = self.mir.lvalue_ty(*self.tcx, discr).to_ty(*self.tcx);
+
+                    let discr_val = match discr_ty.sty {
+                        ty::TyInt(IntTy::I64) | ty::TyUint(UintTy::U64) => panic!("unimplemented >32bit discrs"),
+                        _ => {
+                            debug!("emitting GetLocal({}) for SwitchInt condition", discr_val.index.0);
+                            unsafe {
+                                BinaryenGetLocal(self.module, discr_val.index, BinaryenInt32())
+                            }
+                        }
+                    };
+
+                    block_kind = BinaryenBlockKind::Switch(discr_val);
+                }
                 TerminatorKind::Call {
                     ref func, ref args, ref destination, ..
                 } => unsafe {
@@ -406,6 +427,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                           BinaryenExpressionRef(ptr::null_mut()));
                     }
                 }
+
                 TerminatorKind::If { ref cond, ref targets } => {
                     debug!("emitting Branches for If, from bb{} to bb{} and bb{}", i, targets.0.index(), targets.1.index());
 
@@ -420,6 +442,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                           BinaryenExpressionRef(ptr::null_mut()));
                     }
                 }
+
                 TerminatorKind::Switch { ref adt_def, ref targets, .. } => {
                     // We're required to have only unique (from, to) edges, while we have
                     // a variant to target mapping, where multiple variants can branch to
@@ -460,6 +483,37 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         }
                     }
                 }
+                
+                TerminatorKind::SwitchInt { ref targets, .. } => {
+                    let target_per_index = targets.iter().map(|&t| t.index());
+                    let mut indexes_per_target = HashMap::new();
+                    for (index, target) in target_per_index.enumerate() {
+                        match indexes_per_target.entry(target) {
+                    		Entry::Vacant(entry) => { entry.insert(vec![index]); },
+                    		Entry::Occupied(mut entry) => { entry.get_mut().push(index); },
+                    	}
+                    }
+
+                    for (target, indexes) in indexes_per_target {
+                        debug!("emitting Switch branch from bb{} to bb{}, for switchInt indexes {:?}", i, target, indexes);
+
+                        let labels = indexes.iter().map(|&index| { BinaryenIndex(index as u32) }).collect::<Vec<_>>();
+                        unsafe {
+                            RelooperAddBranchForSwitch(relooper_blocks[i], relooper_blocks[target],
+                                                       labels.as_ptr(), BinaryenIndex(labels.len() as _),
+                                                       BinaryenExpressionRef(ptr::null_mut()));
+                        }
+                    }
+
+                    unsafe {
+                        let default_target = targets[targets.len() - 1].index();
+                        debug!("emitting Switch branch from bb{} to bb{}, as default switchInt branch", i, default_target);                       
+                        RelooperAddBranchForSwitch(relooper_blocks[i], relooper_blocks[default_target],
+                                                   ptr::null(), BinaryenIndex(0),
+                                                   BinaryenExpressionRef(ptr::null_mut()));
+                    }                   
+                }
+
                 TerminatorKind::Return => {
                     /* handled during bb creation */
                 }
