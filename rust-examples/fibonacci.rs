@@ -1,4 +1,4 @@
-#![feature(intrinsics, lang_items, main, no_core, fundamental)]
+#![feature(intrinsics, lang_items, no_core, fundamental)]
 #![no_core]
 
 #[lang = "sized"]
@@ -107,7 +107,6 @@ impl Fibonacci for i32 {
     }
 }
 
-#[main]
 fn main() {
     let result = fibonacci_recursive(10);
     wasm::print_i32(result); // (i32.const 55)
