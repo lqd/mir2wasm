@@ -21,9 +21,27 @@ use binaryen::*;
 use monomorphize;
 use traits;
 
+#[derive(Debug, Clone, Copy)]
+pub struct WasmTransOptions {
+    pub optimize: bool,
+    pub interpret: bool,
+    pub print: bool,
+}
+
+impl WasmTransOptions {
+    pub fn new() -> WasmTransOptions {
+        WasmTransOptions {
+            optimize: false,
+            interpret: false,
+            print: true,
+        }
+    }
+}
+
 pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
                              mir_map: &MirMap<'tcx>,
-                             entry_fn: Option<NodeId>) -> Result<()> {
+                             entry_fn: Option<NodeId>,
+                             options: &WasmTransOptions) -> Result<()> {
 
     let _ignore = tcx.dep_graph.in_ignore();
 
@@ -40,17 +58,21 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
     tcx.map.krate().visit_all_items(v);
 
     unsafe {
-        // TODO: add CLI options to optimize the module: -O ? --release ? or optimize it always ?
-        // TODO: check which of the optimization passes we want aren't on by default here.
+        // TODO: check which of the Binaryen optimization passes we want aren't on by default here.
         //       eg, removing unused functions and imports, minification, etc
-        // BinaryenModuleOptimize(v.module);
+        if options.optimize {
+            BinaryenModuleOptimize(v.module);
+        }
 
         assert!(BinaryenModuleValidate(v.module) == 1, "Internal compiler error: invalid generated module");
 
-        BinaryenModulePrint(v.module);
+        if options.print {
+            BinaryenModulePrint(v.module);
+        }
 
-        // TODO: add CLI option to launch the interpreter: --run ?
-        // BinaryenModuleInterpret(v.module);
+        if options.interpret {
+            BinaryenModuleInterpret(v.module);
+        }
 
         // TODO: add CLI option to save the module to a specified file: -o ?
         // BinaryenModuleWrite(v.module, ...)
