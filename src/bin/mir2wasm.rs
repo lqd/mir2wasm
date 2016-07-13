@@ -68,7 +68,7 @@ fn main() {
                              Options: \n    \
                              -h, --help    Display this message \n    \
                              -O            Optimize the compiled wast module \n    \
-                             --run         Run the compiled module through the interpreter \n    \
+                             --run         Run the compiled module through the interpreter, without printing it \n    \
                              -q            Don't print the compiled wast module";
                 println!("usage: {}", usage);
                 process::exit(0);
@@ -77,7 +77,7 @@ fn main() {
         }
     }
 
-    let mut compiler_calls = WasmCompilerCalls::new(options);    
+    let mut compiler_calls = WasmCompilerCalls::new(options);
     match rustc_driver::run_compiler(&rustc_args, &mut compiler_calls) {
         (Ok(_), _) => process::exit(0),
         (Err(code), _) => process::exit(code as i32)

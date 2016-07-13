@@ -291,4 +291,7 @@ extern {
 
     pub fn RelooperRenderAndDispose(relooper: RelooperRef, entry: RelooperBlockRef, labelHelper: BinaryenIndex, module: BinaryenModuleRef) -> BinaryenExpressionRef;
 
+    // Other APIs
+
+    pub fn BinaryenSetAPITracing(on: bool);
 }

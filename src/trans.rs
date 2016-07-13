@@ -26,6 +26,7 @@ pub struct WasmTransOptions {
     pub optimize: bool,
     pub interpret: bool,
     pub print: bool,
+    trace: bool,
 }
 
 impl WasmTransOptions {
@@ -34,6 +35,7 @@ impl WasmTransOptions {
             optimize: false,
             interpret: false,
             print: true,
+            trace: false,
         }
     }
 }
@@ -55,6 +57,10 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         c_strings: Vec::new(),
     };
 
+    if options.trace {
+        unsafe { BinaryenSetAPITracing(true) }
+    }
+
     tcx.map.krate().visit_all_items(v);
 
     unsafe {
@@ -66,7 +72,11 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
         assert!(BinaryenModuleValidate(v.module) == 1, "Internal compiler error: invalid generated module");
 
-        if options.print {
+        if options.trace {
+            BinaryenSetAPITracing(false);
+        }
+
+        if options.print && !options.interpret {
             BinaryenModulePrint(v.module);
         }
 
@@ -263,10 +273,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         panic!("unimplemented Switch with offset");
                     }
 
-                    // TODO: again, should those substs be collected for the whole frame ?
-                    let substs = self.tcx.mk_substs(Substs::empty());
-                    let adt_layout = self.type_layout_with_substs(adt_ty, substs);
-
+                    let adt_layout = self.type_layout(adt_ty);
                     let discr_val = match *adt_layout {
                         Layout::General { discr, .. } => {
                             let discr_size = discr.size().bytes() as u32;
@@ -328,15 +335,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     binaryen_stmts.push(BinaryenSetLocal(self.module, dest.index, unit_type));
                                 } else {
                                     let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
-                                    let substs = self.tcx.mk_substs(Substs::empty());
-                                    let dest_layout = self.type_layout_with_substs(dest_ty, substs);
+                                    let dest_layout = self.type_layout(dest_ty);
 
                                     match *dest_layout {
                                         Layout::Univariant { .. } | Layout::General { .. } => {
                                             // TODO: implement the calling convention for functions returning non-primitive types
                                             // FIXME: until then, emit byte copies, which is inefficient but works for now
 
-                                            let dest_size = self.type_size_with_substs(dest_ty, substs) as i32 * 8;
+                                            let dest_size = self.type_size(dest_ty) as i32 * 8;
 
                                             vars.push(BinaryenInt32());
                                             let tmp_dest = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
@@ -352,12 +358,32 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                             debug!("tmp - emitting Stores to copy result to stack frame");
                                             let ptr = BinaryenGetLocal(self.module, tmp_dest, BinaryenInt32());
                                             let sp = self.emit_read_sp();
-                                            for i in 0..dest_size / 8 {
-                                                let offset = i as u32 * 8;
-                                                debug!("tmp - emitting Store {}, size: 1, offset: {}", i, offset);
-                                                let read_byte = BinaryenLoad(self.module, 1, 0, offset, 0, BinaryenInt32(), ptr);
-                                                let copy_byte = BinaryenStore(self.module, 1, offset, 0, sp, read_byte);
-                                                binaryen_stmts.push(copy_byte);
+                                            let mut bytes_to_copy = dest_size;
+                                            let mut offset = 0;
+                                            while bytes_to_copy > 0 {
+                                                let size = if bytes_to_copy >= 64 {
+                                                    8
+                                                } else if bytes_to_copy >= 32 {
+                                                    4
+                                                } else if bytes_to_copy >= 16 {
+                                                    2
+                                                } else {
+                                                    1
+                                                };
+
+                                                let ty = if size == 8 {
+                                                    BinaryenInt64()
+                                                } else {
+                                                    BinaryenInt32()
+                                                };
+
+                                                debug!("tmp - emitting Store copy, size: {}, offset: {}", size, offset);
+                                                let read_bytes = BinaryenLoad(self.module, size, 0, offset, 0, ty, ptr);
+                                                let copy_bytes = BinaryenStore(self.module, size, offset, 0, sp, read_bytes);
+                                                binaryen_stmts.push(copy_bytes);
+
+                                                bytes_to_copy -= size as i32 * 8;
+                                                offset += size;
                                             }
                                         }
 
@@ -546,7 +572,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         let dest = self.trans_lval(lvalue);
         let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
 
-        let dest_layout = self.type_layout_with_substs(dest_ty, self.tcx.mk_substs(Substs::empty()));
+        let dest_layout = self.type_layout(dest_ty);
 
         match *rvalue {
             Rvalue::Use(ref operand) => {
@@ -557,7 +583,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             debug!("emitting Store + GetLocal({}) for Assign Use '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                             let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
                             // TODO: match on the dest_ty to know how many bytes to write, not just i32s
-                            BinaryenStore(self.module, 4, offset * 8, 0, ptr, src)
+                            BinaryenStore(self.module, 4, offset, 0, ptr, src)
                         }
                         None => {
                             debug!("emitting SetLocal({}) for Assign Use '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
@@ -596,7 +622,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             debug!("emitting Store + GetLocal({}) for Assign BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                             let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
                             // TODO: match on the dest_ty to know how many bytes to write, not just i32s
-                            BinaryenStore(self.module, 4, offset * 8, 0, ptr, op)
+                            BinaryenStore(self.module, 4, offset, 0, ptr, op)
                         }
                         None => {
                             debug!("emitting SetLocal({}) for Assign BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
@@ -697,7 +723,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         } else {
                             match *dest_layout {
                                 Layout::Univariant { ref variant, .. } => {
-                                    let dest_size = self.type_size_with_substs(dest_ty, self.tcx.mk_substs(Substs::empty())) as i32 * 8;
+                                    let dest_size = self.type_size(dest_ty) as i32 * 8;
                                     // NOTE: use the variant's min_size and alignment for dest_size ?
                                     debug!("allocating tuple in linear memory to SetLocal({}), size: {:?} bytes", dest.index.0, dest_size);
                                     let allocation = self.emit_alloca(dest.index, dest_size);
@@ -725,8 +751,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     CastKind::Misc => {
                         let src = self.trans_operand(operand);
                         let src_ty = self.mir.operand_ty(*self.tcx, operand);
-                        let substs = self.tcx.mk_substs(Substs::empty());
-                        let src_layout = self.type_layout_with_substs(src_ty, substs);
+                        let src_layout = self.type_layout(src_ty);
 
                         // TODO: handle more of the casts (miri doesn't really handle every Misc cast either right now)
                         match (src_layout, &dest_ty.sty) {
@@ -794,9 +819,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             for (offset, operand) in offsets.into_iter().zip(operands) {
                 // let operand_ty = self.mir.operand_ty(*self.tcx, operand);
                 // TODO: match on the operand_ty to know how many bytes to store, not just i32s
-                let offset = offset as u32 * 8;
                 let src = self.trans_operand(operand);
-                let write_field = BinaryenStore(self.module, 4, offset, 0, read_sp, src);
+                let write_field = BinaryenStore(self.module, 4, offset as u32, 0, read_sp, src);
                 statements.push(write_field);
             }
         }
@@ -818,10 +842,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             Lvalue::Projection(ref projection) => {
                 let base = self.trans_lval(&projection.base);
                 let base_ty = self.mir.lvalue_ty(*self.tcx, &projection.base).to_ty(*self.tcx);
-
-                // TODO: should those substs be collected for the whole frame ?
-                let substs = self.tcx.mk_substs(Substs::empty());
-                let base_layout = self.type_layout_with_substs(base_ty, substs);
+                let base_layout = self.type_layout(base_ty);
 
                 match projection.elem {
                     ProjectionElem::Deref => {
@@ -880,7 +901,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             debug!("emitting GetLocal({}) + Load for '{:?}'", binaryen_lvalue.index.0, lvalue);
                             let ptr = BinaryenGetLocal(self.module, binaryen_lvalue.index, t);
                             // TODO: match on the field ty to know how many bytes to read, not just i32s
-                            BinaryenLoad(self.module, 4, 0, offset * 8, 0, BinaryenInt32(), ptr)
+                            BinaryenLoad(self.module, 4, 0, offset, 0, BinaryenInt32(), ptr)
                         }
                         None => {
                             // debug!("emitting GetLocal for '{:?}'", lvalue);
@@ -892,45 +913,55 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             Operand::Constant(ref c) => {
                 match c.literal {
                     Literal::Value { ref value } => {
-                        // TODO: handle more Rust types here, and cleanup the match
-                        //       to return a single BinaryenLiteral if possible
-                        match *value {
-                            ConstVal::Integral(ConstInt::Isize(ConstIsize::Is32(val))) |
-                            ConstVal::Integral(ConstInt::I32(val)) => {
-                                unsafe {
-                                    let lit = BinaryenLiteralInt32(val);
-                                    BinaryenConst(self.module, lit)
+                        // TODO: handle more Rust types here
+                        unsafe {
+                            let lit = match *value {
+                                ConstVal::Integral(ConstInt::Isize(ConstIsize::Is32(val))) |
+                                ConstVal::Integral(ConstInt::I32(val)) => {
+                                    BinaryenLiteralInt32(val)
                                 }
-                            }
-                            ConstVal::Integral(ConstInt::Isize(ConstIsize::Is64(val))) |
-                            ConstVal::Integral(ConstInt::I64(val)) => {
-                                unsafe {
-                                    let lit = BinaryenLiteralInt64(val);
-                                    BinaryenConst(self.module, lit)
+                                // TODO: Since we're at the wasm32 stage, and until wasm64, it's probably best if isize is always i32 ?
+                                ConstVal::Integral(ConstInt::Isize(ConstIsize::Is64(val))) => {
+                                    BinaryenLiteralInt32(val as i32)
                                 }
-                            }
-                            ConstVal::Bool (val) => {
-                                let val = if val { 1 } else { 0 };
-                                unsafe {
-                                    let lit = BinaryenLiteralInt32(val);
-                                    BinaryenConst(self.module, lit)
+                                ConstVal::Integral(ConstInt::I64(val)) => {
+                                    BinaryenLiteralInt64(val)
                                 }
-                            }
-                            _ => panic!("unimplemented value: {:?}", value)
+                                ConstVal::Bool(val) => {
+                                    let val = if val { 1 } else { 0 };
+                                    BinaryenLiteralInt32(val)
+                                }
+                                _ => panic!("unimplemented value: {:?}", value)
+                            };
+                            BinaryenConst(self.module, lit)
                         }
+
                     }
                     Literal::Promoted { .. } => {
-                        panic!("unimplemented Promoted literal: {:?}", c)
+                        panic!("unimplemented Promoted Literal: {:?}", c)
                     }
-                    _ => panic!("{:?}", c)
+                    _ => panic!("unimplemented Constant Literal {:?}", c)
                 }
             }
         }
     }
 
+    #[inline]
+    fn type_size(&self, ty: Ty<'tcx>) -> usize {
+        let substs = self.tcx.mk_substs(Substs::empty());
+        self.type_size_with_substs(ty, substs)
+    }
+
     // Imported from miri
+    #[inline]
     fn type_size_with_substs(&self, ty: Ty<'tcx>, substs: &'tcx Substs<'tcx>) -> usize {
         self.type_layout_with_substs(ty, substs).size(&self.tcx.data_layout).bytes() as usize
+    }
+
+    #[inline]
+    fn type_layout(&self, ty: Ty<'tcx>) -> &'tcx Layout {
+        let substs = self.tcx.mk_substs(Substs::empty());
+        self.type_layout_with_substs(ty, substs)
     }
 
     // Imported from miri and slightly modified to adapt to our monomorphize api
