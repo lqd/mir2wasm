@@ -137,12 +137,31 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
                 fun_types: &mut self.fun_types,
                 fun_names: &mut self.fun_names,
                 c_strings: &mut self.c_strings,
+                frame: Frame::new(),
             };
 
             ctxt.trans();
         }
 
         intravisit::walk_fn(self, fk, fd, b, s)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum FrameKind {
+    Default,
+    ReturnsToStack,
+}
+
+struct Frame {
+    allocated: bool,
+}
+
+impl Frame {
+    fn new() -> Frame {
+        Frame {
+            allocated: false,
+        }
     }
 }
 
@@ -157,6 +176,7 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
     fun_types: &'v mut HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     fun_names: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), CString>,
     c_strings: &'v mut Vec<CString>,
+    frame: Frame,
 }
 
 impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
@@ -179,20 +199,29 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
         // Translate arg and ret tys to wasm
         let binaryen_args: Vec<_> = self.sig.inputs.iter().map(|t| rust_ty_to_binaryen(t)).collect();
-        let mut needs_ret_var = false;
-        let binaryen_ret = match self.sig.output {
-            ty::FnOutput::FnConverging(t) => {
-                if !t.is_nil() {
-                    needs_ret_var = true;
-                    rust_ty_to_binaryen(t)
-                } else {
-                    BinaryenNone()
+
+        let mut frame_kind = FrameKind::Default;
+        let mut rust_ret_ty = None;
+        let binaryen_ret_ty = match self.sig.output {
+            ty::FnOutput::FnConverging(ty) => {
+                rust_ret_ty = Some(ty);
+
+                match ty.sty {
+                    ty::TyEnum(..) | ty::TyStruct(..) => {
+                        frame_kind = FrameKind::ReturnsToStack;
+                    }
+                    _ => ()
                 }
-            },
+
+                rust_ty_to_binaryen(ty)
+            }
+
             ty::FnOutput::FnDiverging => {
                 BinaryenNone()
             }
         };
+
+        debug!("fn - ret_ty {:?}, frame_kind: {:?}", rust_ret_ty, frame_kind);
 
         // Create the wasm vars.
         // Params and vars form the list of locals, both sharing the same index space.
@@ -206,21 +235,21 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             vars.push(rust_ty_to_binaryen(mir_var.ty));
         }
 
-        if needs_ret_var {
-            vars.push(binaryen_ret);
+        if rust_ret_ty.is_some() {
+            vars.push(binaryen_ret_ty);
         }
 
-        // Function prologue: stack pointer local
+        // Function prologue: frame pointer local
         vars.push(BinaryenInt32());
-        let stack_pointer_local = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
+        let frame_pointer_local = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
 
         // relooper helper local for irreducible control flow
         vars.push(BinaryenInt32());
         let relooper_local = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
 
         let locals_count = binaryen_args.len() + vars.len();
-        debug!("{} wasm locals initially found - params: {}, vars: {} (incl. stack pointer helper ${}, relooper helper ${})",
-            locals_count, binaryen_args.len(), vars.len(), stack_pointer_local.0, relooper_local.0);
+        debug!("{} wasm locals initially found - params: {}, vars: {} (incl. frame pointer ${}, relooper helper ${})",
+            locals_count, binaryen_args.len(), vars.len(), frame_pointer_local.0, relooper_local.0);
 
         // Create the relooper for tying together basic blocks. We're
         // going to first translate the basic blocks without the
@@ -252,12 +281,58 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             match bb.terminator().kind {
                 TerminatorKind::Return => {
                     // Emit function epilogue:
-                    // TODO: like the prologue, not always necessary
                     unsafe {
-                        debug!("emitting function epilogue, GetLocal({}) + Store", stack_pointer_local.0);
-                        let read_original_sp = BinaryenGetLocal(self.module, stack_pointer_local, BinaryenInt32());
-                        let restore_original_sp = BinaryenStore(self.module, 4, 0, 0, self.emit_sp(), read_original_sp);
-                        binaryen_stmts.push(restore_original_sp);
+                        if self.frame.allocated {
+                            debug!("emitting function epilogue, GetLocal({}) + Store", frame_pointer_local.0);
+                            let read_frame_pointer = BinaryenGetLocal(self.module, frame_pointer_local, BinaryenInt32());
+                            let restore_stack_pointer = BinaryenStore(self.module, 4, 0, 0, self.emit_sp(), read_frame_pointer);
+                            binaryen_stmts.push(restore_stack_pointer);
+                        }
+                    }
+
+                    match frame_kind {
+                        FrameKind::Default => (),
+                        FrameKind::ReturnsToStack => {
+                            unsafe {
+                                let src = self.trans_operand(&Operand::Consume(Lvalue::ReturnPointer));
+
+                                // TMP - the poor man's memcpy
+                                let dest = BinaryenGetLocal(self.module, frame_pointer_local, BinaryenInt32());
+                                let dest_size = self.type_size(rust_ret_ty.expect("")) as i32 * 8;
+
+                                debug!("tmp - emitting Stores to copy {}-byte result to frame pointer", dest_size);
+                                let mut bytes_to_copy = dest_size;
+                                let mut offset = 0;
+                                while bytes_to_copy > 0 {
+                                    let size = if bytes_to_copy >= 64 {
+                                        8
+                                    } else if bytes_to_copy >= 32 {
+                                        4
+                                    } else if bytes_to_copy >= 16 {
+                                        2
+                                    } else {
+                                        1
+                                    };
+
+                                    let ty = if size == 8 {
+                                        BinaryenInt64()
+                                    } else {
+                                        BinaryenInt32()
+                                    };
+
+                                    debug!("tmp - emitting Store copy, size: {}, offset: {}", size, offset);
+                                    let read_bytes = BinaryenLoad(self.module, size, 0, offset, 0, ty, src);
+                                    let copy_bytes = BinaryenStore(self.module, size, offset, 0, dest, read_bytes);
+                                    binaryen_stmts.push(copy_bytes);
+
+                                    // BinaryenExpressionPrint(copy_bytes);
+
+                                    bytes_to_copy -= size as i32 * 8;
+                                    offset += size;
+                                }
+                            }
+                            // panic!("optimize {:?}", self.tcx.item_path_str(self.did));
+                        }
                     }
 
                     debug!("emitting Return from fn {:?}", self.tcx.item_path_str(self.did));
@@ -301,109 +376,152 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     //       For the other types, the manual stack in linear memory will be used, and pointers into this stack
                     //       passed as i32s. A call to a function returning a struct will require preparing the output return value space on
                     //       the caller function's frame, and the called function will write its return value there to avoid memcpys
-                    if let Some((b_func, b_fnty, call_kind)) = self.trans_fn_name_direct(func) {
-                        let b_args: Vec<_> = args.iter().map(|a| self.trans_operand(a)).collect();
-                        let b_call = match call_kind {
-                            BinaryenCallKind::Direct => {
-                                BinaryenCall(self.module,
-                                             b_func,
-                                             b_args.as_ptr(),
-                                             BinaryenIndex(b_args.len() as _),
-                                             b_fnty)
-                            }
-                            BinaryenCallKind::Import => {
-                                BinaryenCallImport(self.module,
-                                                   b_func,
-                                                   b_args.as_ptr(),
-                                                   BinaryenIndex(b_args.len() as _),
-                                                   b_fnty)
-                            }
-                        };
 
-                        match *destination {
-                            Some((ref lvalue, _)) => {
-                                let dest = self.trans_lval(lvalue);
+                    if let Some((ref lvalue, _)) = *destination {
+                        let dest = self.trans_lval(lvalue);
+                        let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
 
-                                if b_fnty == BinaryenNone() {
-                                    // The result of the Rust call is put in MIR into a tmp local,
-                                    // but the wasm function returns void (like the print externs)
-                                    // TODO: what representation should the unit type have in wasm ?
-                                    debug!("emitting {:?} Call to fn {:?} + SetLocal({}) for unit type", call_kind, func, dest.index.0);
-                                    binaryen_stmts.push(b_call);
+                        let (call, call_kind) = self.trans_fn_call(func, args);
 
-                                    let unit_type = BinaryenConst(self.module, BinaryenLiteralInt32(-1));
-                                    binaryen_stmts.push(BinaryenSetLocal(self.module, dest.index, unit_type));
-                                } else {
-                                    let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
-                                    let dest_layout = self.type_layout(dest_ty);
+                        if dest_ty.is_nil() {
+                            // The result of the Rust call is put in MIR into a tmp local,
+                            // but the wasm function returns void (like the print externs)
+                            // TODO: the unit type should be represented as void in wasm, and its use
+                            //       in locals and return values ignored for the module to validate
+                            debug!("emitting {:?} Call to fn {:?} + SetLocal({}) for unit type", call_kind, func, dest.index.0);
+                            binaryen_stmts.push(call);
 
-                                    match *dest_layout {
-                                        Layout::Univariant { .. } | Layout::General { .. } => {
-                                            // TODO: implement the calling convention for functions returning non-primitive types
-                                            // FIXME: until then, emit byte copies, which is inefficient but works for now
+                            let unit_type = BinaryenConst(self.module, BinaryenLiteralInt32(-1));
+                            binaryen_stmts.push(BinaryenSetLocal(self.module, dest.index, unit_type));
+                        } else {
+                            let dest_layout = self.type_layout(dest_ty);
+                            match *dest_layout {
+                                Layout::Univariant { .. } | Layout::General { .. } => {
+                                    let dest_size = self.type_size(dest_ty) as i32 * 8;
 
-                                            let dest_size = self.type_size(dest_ty) as i32 * 8;
+                                    debug!("allocating return value in linear memory to SetLocal({}), size: {:?}", dest.index.0, dest_size);
+                                    let allocation = self.emit_alloca(dest.index, dest_size);
+                                    binaryen_stmts.push(allocation);
 
-                                            vars.push(BinaryenInt32());
-                                            let tmp_dest = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
-
-                                            debug!("tmp - emitting {:?} Call to fn {:?} + SetLocal({}) of the result pointer", call_kind, func, tmp_dest.0);
-                                            binaryen_stmts.push(BinaryenSetLocal(self.module, tmp_dest, b_call));
-
-                                            debug!("tmp - allocating return value in linear memory to SetLocal({}), size: {:?}", dest.index.0, dest_size);
-                                            let allocation = self.emit_alloca(dest.index, dest_size);
-                                            binaryen_stmts.push(allocation);
-
-                                            // TMP - the poor man's memcpy
-                                            debug!("tmp - emitting Stores to copy result to stack frame");
-                                            let ptr = BinaryenGetLocal(self.module, tmp_dest, BinaryenInt32());
-                                            let sp = self.emit_read_sp();
-                                            let mut bytes_to_copy = dest_size;
-                                            let mut offset = 0;
-                                            while bytes_to_copy > 0 {
-                                                let size = if bytes_to_copy >= 64 {
-                                                    8
-                                                } else if bytes_to_copy >= 32 {
-                                                    4
-                                                } else if bytes_to_copy >= 16 {
-                                                    2
-                                                } else {
-                                                    1
-                                                };
-
-                                                let ty = if size == 8 {
-                                                    BinaryenInt64()
-                                                } else {
-                                                    BinaryenInt32()
-                                                };
-
-                                                debug!("tmp - emitting Store copy, size: {}, offset: {}", size, offset);
-                                                let read_bytes = BinaryenLoad(self.module, size, 0, offset, 0, ty, ptr);
-                                                let copy_bytes = BinaryenStore(self.module, size, offset, 0, sp, read_bytes);
-                                                binaryen_stmts.push(copy_bytes);
-
-                                                bytes_to_copy -= size as i32 * 8;
-                                                offset += size;
-                                            }
-                                        }
-
-                                        Layout::Scalar { .. } | Layout::CEnum { .. } => {
-                                            debug!("emitting {:?} Call to fn {:?} + SetLocal({}) of the result", call_kind, func, dest.index.0);
-                                            binaryen_stmts.push(BinaryenSetLocal(self.module, dest.index, b_call));
-                                        }
-
-                                        _ => panic!("unimplemented Call returned to Layout {:?}", dest_layout)
-                                    }
+                                    debug!("emitting {:?} Call to fn {:?}", call_kind, func);
+                                    binaryen_stmts.push(call);
                                 }
-                            }
-                            _ => {
-                                debug!("emitting Call to fn {:?}", func);
-                                binaryen_stmts.push(b_call);
+
+                                Layout::Scalar { .. } | Layout::CEnum { .. } => {
+                                    debug!("emitting {:?} Call to fn {:?} + SetLocal({}) of the result", call_kind, func, dest.index.0);
+                                    binaryen_stmts.push(BinaryenSetLocal(self.module, dest.index, call));
+                                }
+
+                                _ => panic!("unimplemented Call returned to Layout {:?}", dest_layout)
                             }
                         }
                     } else {
-                        panic!("untranslated fn call to {:?}", func)
+                        panic!("destination-less call");
                     }
+
+                    // if let Some((b_func, b_fnty, call_kind)) = self.trans_fn_name_direct(func) {
+                    //     let b_args: Vec<_> = args.iter().map(|a| self.trans_operand(a)).collect();
+                    //     let b_call = match call_kind {
+                    //         BinaryenCallKind::Direct => {
+                    //             BinaryenCall(self.module,
+                    //                          b_func,
+                    //                          b_args.as_ptr(),
+                    //                          BinaryenIndex(b_args.len() as _),
+                    //                          b_fnty)
+                    //         }
+                    //         BinaryenCallKind::Import => {
+                    //             BinaryenCallImport(self.module,
+                    //                                b_func,
+                    //                                b_args.as_ptr(),
+                    //                                BinaryenIndex(b_args.len() as _),
+                    //                                b_fnty)
+                    //         }
+                    //     };
+                    //
+                    //     match *destination {
+                    //         Some((ref lvalue, _)) => {
+                    //             let dest = self.trans_lval(lvalue);
+                    //
+                    //             if b_fnty == BinaryenNone() {
+                    //                 // The result of the Rust call is put in MIR into a tmp local,
+                    //                 // but the wasm function returns void (like the print externs)
+                    //                 // TODO: what representation should the unit type have in wasm ?
+                    //                 debug!("emitting {:?} Call to fn {:?} + SetLocal({}) for unit type", call_kind, func, dest.index.0);
+                    //                 binaryen_stmts.push(b_call);
+                    //
+                    //                 let unit_type = BinaryenConst(self.module, BinaryenLiteralInt32(-1));
+                    //                 binaryen_stmts.push(BinaryenSetLocal(self.module, dest.index, unit_type));
+                    //             } else {
+                    //                 let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
+                    //                 let dest_layout = self.type_layout(dest_ty);
+                    //
+                    //                 match *dest_layout {
+                    //                     Layout::Univariant { .. } | Layout::General { .. } => {
+                    //                         // TODO: implement the calling convention for functions returning non-primitive types
+                    //                         // FIXME: until then, emit byte copies, which is inefficient but works for now
+                    //
+                    //                         let dest_size = self.type_size(dest_ty) as i32 * 8;
+                    //
+                    //                         vars.push(BinaryenInt32());
+                    //                         let tmp_dest = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
+                    //
+                    //                         debug!("tmp - emitting {:?} Call to fn {:?} + SetLocal({}) of the result pointer", call_kind, func, tmp_dest.0);
+                    //                         binaryen_stmts.push(BinaryenSetLocal(self.module, tmp_dest, b_call));
+                    //
+                    //                         debug!("tmp - allocating return value in linear memory to SetLocal({}), size: {:?}", dest.index.0, dest_size);
+                    //                         let allocation = self.emit_alloca(dest.index, dest_size);
+                    //                         binaryen_stmts.push(allocation);
+                    //
+                    //                         // TMP - the poor man's memcpy
+                    //                         debug!("tmp - emitting Stores to copy result to stack frame");
+                    //                         let ptr = BinaryenGetLocal(self.module, tmp_dest, BinaryenInt32());
+                    //                         let sp = self.emit_read_sp();
+                    //                         let mut bytes_to_copy = dest_size;
+                    //                         let mut offset = 0;
+                    //                         while bytes_to_copy > 0 {
+                    //                             let size = if bytes_to_copy >= 64 {
+                    //                                 8
+                    //                             } else if bytes_to_copy >= 32 {
+                    //                                 4
+                    //                             } else if bytes_to_copy >= 16 {
+                    //                                 2
+                    //                             } else {
+                    //                                 1
+                    //                             };
+                    //
+                    //                             let ty = if size == 8 {
+                    //                                 BinaryenInt64()
+                    //                             } else {
+                    //                                 BinaryenInt32()
+                    //                             };
+                    //
+                    //                             debug!("tmp - emitting Store copy, size: {}, offset: {}", size, offset);
+                    //                             let read_bytes = BinaryenLoad(self.module, size, 0, offset, 0, ty, ptr);
+                    //                             let copy_bytes = BinaryenStore(self.module, size, offset, 0, sp, read_bytes);
+                    //                             binaryen_stmts.push(copy_bytes);
+                    //
+                    //                             bytes_to_copy -= size as i32 * 8;
+                    //                             offset += size;
+                    //                         }
+                    //                     }
+                    //
+                    //                     Layout::Scalar { .. } | Layout::CEnum { .. } => {
+                    //                         debug!("emitting {:?} Call to fn {:?} + SetLocal({}) of the result", call_kind, func, dest.index.0);
+                    //                         binaryen_stmts.push(BinaryenSetLocal(self.module, dest.index, b_call));
+                    //                     }
+                    //
+                    //                     _ => panic!("unimplemented Call returned to Layout {:?}", dest_layout)
+                    //                 }
+                    //             }
+                    //         }
+                    //         _ => {
+                    //             debug!("emitting Call to fn {:?}", func);
+                    //             binaryen_stmts.push(b_call);
+                    //         }
+                    //     }
+                    // } else {
+                    //     panic!("untranslated fn call to {:?}", func)
+                    // }
                 },
                 _ => ()
             }
@@ -521,26 +639,28 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 self.c_strings.push(name);
                 let ty = BinaryenAddFunctionType(self.module,
                                                  name_ptr,
-                                                 binaryen_ret,
+                                                 binaryen_ret_ty,
                                                  binaryen_args.as_ptr(),
                                                  BinaryenIndex(binaryen_args.len() as _));
                 self.fun_types.insert(self.sig.clone(), ty);
             }
 
-            // Create the function prologue
-            // TODO: the epilogue and prologue are not always necessary
-            debug!("emitting function prologue, SetLocal({}) + Load", stack_pointer_local.0);
-            let copy_sp = BinaryenSetLocal(self.module, stack_pointer_local, self.emit_read_sp());
-            let prologue = RelooperAddBlock(relooper, copy_sp);
+            let mut first_block = relooper_blocks[0];
+            if self.frame.allocated || frame_kind == FrameKind::ReturnsToStack {
+                // Create the function prologue
+                debug!("emitting function prologue, SetLocal({}) + Load", frame_pointer_local.0);
+                let prepare_frame_pointer = BinaryenSetLocal(self.module, frame_pointer_local, self.emit_read_sp());
+                let prologue = RelooperAddBlock(relooper, prepare_frame_pointer);
 
-            if relooper_blocks.len() > 0 {
-                RelooperAddBranch(prologue, relooper_blocks[0],
+                RelooperAddBranch(prologue, first_block,
                                   BinaryenExpressionRef(ptr::null_mut()),
                                   BinaryenExpressionRef(ptr::null_mut()));
+
+                first_block = prologue;
             }
 
             let body = RelooperRenderAndDispose(relooper,
-                                                prologue,
+                                                first_block,
                                                 relooper_local,
                                                 self.module);
 
@@ -783,7 +903,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
     }
 
     // TODO: handle > 2GB allocations, when more types are handled and there's a consistent story around signed and unsigned
-    fn emit_alloca(&self, dest: BinaryenIndex, dest_size: i32) -> BinaryenExpressionRef {
+    fn emit_alloca(&mut self, dest: BinaryenIndex, dest_size: i32) -> BinaryenExpressionRef {
+        self.frame.allocated = true;
         unsafe {
             let sp = self.emit_sp();
             let read_sp = BinaryenLoad(self.module, 4, 0, 0, 0, BinaryenInt32(), sp);
@@ -975,7 +1096,36 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         })
     }
 
-    fn trans_fn_name_direct(&mut self, operand: &Operand<'tcx>) -> Option<(*const c_char, BinaryenType, BinaryenCallKind)> {
+    fn trans_fn_call(&mut self,
+                    func: &Operand<'tcx>,
+                    args: &Vec<Operand<'tcx>>) -> (BinaryenExpressionRef, BinaryenCallKind) {
+        let frame = Frame::new();
+        let (func, ret_ty, call_kind) = self.trans_fn_name_direct(func, frame).expect(&format!("untranslated fn call to {:?}", func));
+        let binaryen_args: Vec<_> = args.iter().map(|a| self.trans_operand(a)).collect();
+
+        let call = unsafe {
+            match call_kind {
+                BinaryenCallKind::Direct => {
+                    BinaryenCall(self.module,
+                                 func,
+                                 binaryen_args.as_ptr(),
+                                 BinaryenIndex(binaryen_args.len() as _),
+                                 ret_ty)
+                }
+                BinaryenCallKind::Import => {
+                    BinaryenCallImport(self.module,
+                                       func,
+                                       binaryen_args.as_ptr(),
+                                       BinaryenIndex(binaryen_args.len() as _),
+                                       ret_ty)
+                }
+            }
+        };
+
+        (call, call_kind)
+    }
+
+    fn trans_fn_name_direct(&mut self, operand: &Operand<'tcx>, frame: Frame) -> Option<(*const c_char, BinaryenType, BinaryenCallKind)> {
         match *operand {
             Operand::Constant(ref c) => {
                 match c.literal {
@@ -1039,6 +1189,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                             fun_types: &mut self.fun_types,
                                             fun_names: &mut self.fun_names,
                                             c_strings: &mut self.c_strings,
+                                            frame: frame,
                                         };
 
                                         debug!("translating monomorphized fn {:?}", self.tcx.item_path_str(fn_did));
