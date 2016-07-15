@@ -291,54 +291,70 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     }
 
                     match frame_kind {
-                        FrameKind::Default => (),
+                        FrameKind::Default => {
+                            debug!("emitting Return from fn {:?}", self.tcx.item_path_str(self.did));
+                            let expr = self.trans_operand(&Operand::Consume(Lvalue::ReturnPointer));
+                            let expr = unsafe { BinaryenReturn(self.module, expr) };
+                            binaryen_stmts.push(expr);
+                        },
                         FrameKind::ReturnsToStack => {
                             unsafe {
-                                let src = self.trans_operand(&Operand::Consume(Lvalue::ReturnPointer));
+                                // let src = self.trans_operand(&Operand::Consume(Lvalue::ReturnPointer));
+                                // // BinaryenExpressionPrint(src);
 
                                 // TMP - the poor man's memcpy
-                                let dest = BinaryenGetLocal(self.module, frame_pointer_local, BinaryenInt32());
-                                let dest_size = self.type_size(rust_ret_ty.expect("")) as i32 * 8;
+                                // let dest = BinaryenGetLocal(self.module, frame_pointer_local, BinaryenInt32());
+                                // let dest_size = self.type_size(rust_ret_ty.expect("")) as i32 * 8;
 
-                                debug!("tmp - emitting Stores to copy {}-byte result to frame pointer", dest_size);
-                                let mut bytes_to_copy = dest_size;
-                                let mut offset = 0;
-                                while bytes_to_copy > 0 {
-                                    let size = if bytes_to_copy >= 64 {
-                                        8
-                                    } else if bytes_to_copy >= 32 {
-                                        4
-                                    } else if bytes_to_copy >= 16 {
-                                        2
-                                    } else {
-                                        1
-                                    };
+                                // debug!("tmp - emitting Stores to copy {}-byte result to frame pointer", dest_size);
+                                // let mut bytes_to_copy = dest_size;
+                                // let mut offset = 0;
+                                // while bytes_to_copy > 0 {
+                                //     let size = if bytes_to_copy >= 64 {
+                                //         8
+                                //     } else if bytes_to_copy >= 32 {
+                                //         4
+                                //     } else if bytes_to_copy >= 16 {
+                                //         2
+                                //     } else {
+                                //         1
+                                //     };
 
-                                    let ty = if size == 8 {
-                                        BinaryenInt64()
-                                    } else {
-                                        BinaryenInt32()
-                                    };
+                                //     let ty = if size == 8 {
+                                //         BinaryenInt64()
+                                //     } else {
+                                //         BinaryenInt32()
+                                //     };
 
-                                    debug!("tmp - emitting Store copy, size: {}, offset: {}", size, offset);
-                                    let read_bytes = BinaryenLoad(self.module, size, 0, offset, 0, ty, src);
-                                    let copy_bytes = BinaryenStore(self.module, size, offset, 0, dest, read_bytes);
-                                    binaryen_stmts.push(copy_bytes);
+                                //     debug!("tmp - emitting Store copy, size: {}, offset: {}", size, offset);
+                                //     let read_bytes = BinaryenLoad(self.module, size, 0, offset, 0, ty, src);
+                                //     let copy_bytes = BinaryenStore(self.module, size, offset, 0, dest, read_bytes);
+                                //     binaryen_stmts.push(copy_bytes);
 
-                                    // BinaryenExpressionPrint(copy_bytes);
+                                //     // BinaryenExpressionPrint(copy_bytes);
 
-                                    bytes_to_copy -= size as i32 * 8;
-                                    offset += size;
-                                }
+                                //     bytes_to_copy -= size as i32 * 8;
+                                //     offset += size;
+                                // }
+
+                                let read_frame_pointer = BinaryenGetLocal(self.module, frame_pointer_local, BinaryenInt32());
+
+                                // copy the frame pointer value to the expected return var 
+                                let ret_val = self.trans_lval(&Lvalue::ReturnPointer);
+                                binaryen_stmts.push(BinaryenSetLocal(self.module, ret_val.index, read_frame_pointer));
+
+                                // return the value (TODO: return the frame pointer directly and remove this local ?)
+                                debug!("emitting Return frame pointer + SetLocal({}) from fn {:?}", ret_val.index.0, self.tcx.item_path_str(self.did));
+                                let expr = BinaryenReturn(self.module, read_frame_pointer);
+                                binaryen_stmts.push(expr);
                             }
-                            // panic!("optimize {:?}", self.tcx.item_path_str(self.did));
                         }
                     }
 
-                    debug!("emitting Return from fn {:?}", self.tcx.item_path_str(self.did));
-                    let expr = self.trans_operand(&Operand::Consume(Lvalue::ReturnPointer));
-                    let expr = unsafe { BinaryenReturn(self.module, expr) };
-                    binaryen_stmts.push(expr);
+                    // debug!("emitting Return from fn {:?}", self.tcx.item_path_str(self.did));
+                    // let expr = self.trans_operand(&Operand::Consume(Lvalue::ReturnPointer));
+                    // let expr = unsafe { BinaryenReturn(self.module, expr) };
+                    // binaryen_stmts.push(expr);
                 }
                 TerminatorKind::Switch { ref discr, .. } => {
                     let adt = self.trans_lval(discr);
@@ -706,8 +722,15 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             BinaryenStore(self.module, 4, offset, 0, ptr, src)
                         }
                         None => {
-                            debug!("emitting SetLocal({}) for Assign Use '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
-                            BinaryenSetLocal(self.module, dest.index, src)
+                            match *dest_layout {
+                                Layout::Scalar { .. } => {
+                                    // TODO: handle Pointer Scalars differently ?
+                                    debug!("emitting SetLocal({}) for Assign Use Scalar '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
+                                    BinaryenSetLocal(self.module, dest.index, src)
+                                }
+
+                                _ => panic!("DEST TY {:?}, LAYOUT !!!: {:?}", dest_ty, dest_layout)
+                            }                           
                         }
                     };
                     statements.push(statement);
