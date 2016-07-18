@@ -221,8 +221,6 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             }
         };
 
-        debug!("fn - ret_ty {:?}, frame_kind: {:?}", rust_ret_ty, frame_kind);
-
         // Create the wasm vars.
         // Params and vars form the list of locals, both sharing the same index space.
         let mut vars = Vec::new();
@@ -339,7 +337,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                                 let read_frame_pointer = BinaryenGetLocal(self.module, frame_pointer_local, BinaryenInt32());
 
-                                // copy the frame pointer value to the expected return var 
+                                // copy the frame pointer value to the expected return var
                                 let ret_val = self.trans_lval(&Lvalue::ReturnPointer);
                                 binaryen_stmts.push(BinaryenSetLocal(self.module, ret_val.index, read_frame_pointer));
 
@@ -714,26 +712,34 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             Rvalue::Use(ref operand) => {
                 let src = self.trans_operand(operand);
                 unsafe {
-                    let statement = match dest.offset {
+                    match dest.offset {
                         Some(offset) => {
                             debug!("emitting Store + GetLocal({}) for Assign Use '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                             let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
                             // TODO: match on the dest_ty to know how many bytes to write, not just i32s
-                            BinaryenStore(self.module, 4, offset, 0, ptr, src)
+                            let statement = BinaryenStore(self.module, 4, offset, 0, ptr, src);
+                            statements.push(statement);
                         }
                         None => {
                             match *dest_layout {
                                 Layout::Scalar { .. } => {
                                     // TODO: handle Pointer Scalars differently ?
                                     debug!("emitting SetLocal({}) for Assign Use Scalar '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
-                                    BinaryenSetLocal(self.module, dest.index, src)
+                                    let statement = BinaryenSetLocal(self.module, dest.index, src);
+                                    statements.push(statement);
                                 }
 
-                                _ => panic!("DEST TY {:?}, LAYOUT !!!: {:?}", dest_ty, dest_layout)
-                            }                           
+                                _ => {
+                                    debug!("SRC {:?}, DEST TY {:?}, LAYOUT !!!: {:?}", operand, dest_ty, dest_layout);
+
+                                    let dest_size = self.type_size(dest_ty) as u32 * 8;
+                                    debug!("emitting Copies to Local({}) for Assign Use '{:?} = {:?}', size: {}", dest.index.0, lvalue, rvalue, dest_size);
+                                    let dest = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
+                                    self.emit_copy(src, dest, dest_size, statements);
+                                }
+                            }
                         }
-                    };
-                    statements.push(statement);
+                    }
                 }
             }
 
@@ -967,6 +973,39 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 let write_field = BinaryenStore(self.module, 4, offset as u32, 0, read_sp, src);
                 statements.push(write_field);
             }
+        }
+    }
+
+    fn emit_copy(&self, src: BinaryenExpressionRef, dest: BinaryenExpressionRef, size: u32,
+                 statements: &mut Vec<BinaryenExpressionRef>) {
+        let mut bytes_to_copy = size;
+        let mut offset = 0;
+        while bytes_to_copy > 0 {
+            let size = if bytes_to_copy >= 64 {
+                8
+            } else if bytes_to_copy >= 32 {
+                4
+            } else if bytes_to_copy >= 16 {
+                2
+            } else {
+                1
+            };
+
+            let ty = if size == 8 {
+                BinaryenInt64()
+            } else {
+                BinaryenInt32()
+            };
+
+            debug!("emitting Store copy, size: {}, offset: {}", size, offset);
+            unsafe {
+                let read_bytes = BinaryenLoad(self.module, size, 0, offset, 0, ty, src);
+                let copy_bytes = BinaryenStore(self.module, size, offset, 0, dest, read_bytes);
+                statements.push(copy_bytes);
+            }
+
+            bytes_to_copy -= size * 8;
+            offset += size;
         }
     }
 
