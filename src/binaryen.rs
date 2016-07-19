@@ -285,6 +285,13 @@ extern {
 
     pub fn RelooperAddBranch(from: RelooperBlockRef, to: RelooperBlockRef, condition: BinaryenExpressionRef, code: BinaryenExpressionRef);
 
+    pub fn RelooperAddBlockWithSwitch(relooper: RelooperRef, code: BinaryenExpressionRef, condition: BinaryenExpressionRef) -> RelooperBlockRef;
+
+    pub fn RelooperAddBranchForSwitch(from: RelooperBlockRef, to: RelooperBlockRef, indexes: *const BinaryenIndex, numIndexes: BinaryenIndex, code: BinaryenExpressionRef);
+
     pub fn RelooperRenderAndDispose(relooper: RelooperRef, entry: RelooperBlockRef, labelHelper: BinaryenIndex, module: BinaryenModuleRef) -> BinaryenExpressionRef;
 
+    // Other APIs
+
+    pub fn BinaryenSetAPITracing(on: bool);
 }
