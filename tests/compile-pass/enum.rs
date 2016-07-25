@@ -1,4 +1,5 @@
-#![feature(lang_items, no_core)]
+// xfail - this makes an unknown error when we try to interpret it in binaryen.
+#![feature(lang_items, no_core, start)]
 #![allow(dead_code)]
 #![no_core]
 
@@ -13,10 +14,12 @@ enum Tag {
     B(isize)
 }
 
-fn main() {
+#[start]
+fn main(_i: isize, _: *const *const u8) -> isize {
     let a = Tag::A(5);
     match a {
         Tag::A(i) => i,
         Tag::B(i) => i,
     };
+    0
 }
