@@ -1,3 +1,4 @@
+//xfail
 #![feature(custom_attribute)]
 #![allow(dead_code, unused_attributes)]
 

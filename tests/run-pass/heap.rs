@@ -1,3 +1,4 @@
+//xfail
 #![feature(custom_attribute, box_syntax)]
 #![allow(dead_code, unused_attributes)]
 

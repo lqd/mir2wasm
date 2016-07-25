@@ -54,7 +54,8 @@ fn main() {
     env_logger::init().unwrap();
 
     let wasm_compiler_args = ["--run", "-O", "-q", "-h", "--help"];
-    let rustc_args : Vec<String> = std::env::args().filter(|arg| !wasm_compiler_args.contains(&arg.as_ref())).collect();
+    let rustc_args : Vec<String> =
+        std::env::args().filter(|arg| !wasm_compiler_args.contains(&arg.as_ref())).collect();
 
     // TODO: use a command line parsing library
     let mut options = WasmTransOptions::new();
