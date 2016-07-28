@@ -1,4 +1,3 @@
-// xfail - this makes an unknown error when we try to interpret it in binaryen.
 #![feature(lang_items, no_core, start)]
 #![allow(dead_code)]
 #![no_core]
@@ -10,8 +9,8 @@ trait Sized {}
 trait Copy {}
 
 enum Tag {
-    A(isize),
-    B(isize)
+    A(i32),
+    B(i32)
 }
 
 #[start]
