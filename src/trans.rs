@@ -730,6 +730,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 }
 
                                 _ => {
+                                    // si la lvalue = return, on a pas besoin de copier dans la var tmp ici non ?
+
+                                    // let dest = if lvalue == &Lvalue::ReturnPointer {
+                                    //     BinaryenIndex(dest.index + 1)
+                                    // } else {
+                                    //     dest
+                                    // };
+
                                     debug!("SRC {:?}, DEST TY {:?}, LAYOUT !!!: {:?}", operand, dest_ty, dest_layout);
 
                                     let dest_size = self.type_size(dest_ty) as u32 * 8;
@@ -782,10 +790,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 }
             }
 
-            Rvalue::Ref( _, _, ref lvalue) => {
+            Rvalue::Ref( _, _, ref lvalue_ref) => {
                 // TODO: for shared refs only ?
                 // TODO: works for refs to "our stack", but not the locals on the wasm stack yet
-                let expr = self.trans_operand(&Operand::Consume(lvalue.clone()));
+                let expr = self.trans_operand(&Operand::Consume(lvalue_ref.clone()));
                 unsafe {
                     debug!("emitting SetLocal({}) for Assign Ref '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                     let expr = BinaryenSetLocal(self.module, dest.index, expr);
