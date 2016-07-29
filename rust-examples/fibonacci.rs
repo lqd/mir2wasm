@@ -107,19 +107,45 @@ impl Fibonacci for i32 {
     }
 }
 
+// Panic and assert
+#[lang = "panic"] fn panic() -> ! { loop {} }
+
+macro_rules! panic {
+    () => (
+        panic!("explicit panic")
+    );
+    ($msg:expr) => ({
+        $crate::panic()
+    });
+}
+
+macro_rules! assert {
+    ($cond:expr) => (
+        if !$cond {
+            panic!(concat!("assertion failed: ", stringify!($cond)))
+        }
+    );
+}
+
 fn main() {
+    assert!(true);
+
     let result = fibonacci_recursive(10);
+    assert!(result == 55);
     wasm::print_i32(result); // (i32.const 55)
 
     let result = fibonacci_iterative(25);
+    assert!(result == 75025);
     wasm::print_i32(result); // (i32.const 75025)
 
     let result = fibonacci_recursive(25);
+    assert!(result == 75025);
     wasm::print_i32(result); // a slower (i32.const 75025)
 
     // trait example
     let nth = 20;
     let result = nth.fibonacci();
+    assert!(result == 6765);
     wasm::print_i32(result); // (i32.const 6765)
 
     // the following two, however, create 'promoted' blocks, which are not yet implemented
