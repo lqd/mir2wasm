@@ -118,8 +118,8 @@ mod uint_macros;
 #[path = "num/f32.rs"]   pub mod f32;
 #[path = "num/f64.rs"]   pub mod f64;
 
-#[macro_use]
-pub mod num;
+// #[macro_use]
+// pub mod num;
 
 /* The libcore prelude, not as all-encompassing as the libstd prelude */
 
@@ -145,20 +145,20 @@ pub mod borrow;
 /* Core types and methods on primitives */
 
 pub mod any;
-pub mod array;
+// pub mod array;
 pub mod sync;
 pub mod cell;
-pub mod char;
+// pub mod char;
 pub mod panicking;
-pub mod iter;
+// pub mod iter;
 pub mod option;
 pub mod raw;
 pub mod result;
 
 pub mod slice;
-pub mod str;
+// pub mod str;
 pub mod hash;
-pub mod fmt;
+// pub mod fmt;
 
 // note: does not need to be public
 mod char_private;
