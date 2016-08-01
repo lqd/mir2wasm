@@ -3,7 +3,7 @@ use error::*;
 use rustc::mir::repr::*;
 use rustc::mir::mir_map::MirMap;
 use rustc::middle::const_val::ConstVal;
-use rustc_const_math::{ConstInt, ConstIsize};
+use rustc_const_math::{ConstInt, ConstIsize, ConstUsize};
 use rustc::ty::{self, TyCtxt, Ty, FnSig};
 use rustc::ty::layout::{self, Layout, Size};
 use rustc::ty::subst::Substs;
@@ -509,6 +509,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         _ => ()
                     }
                 }
+
+                TerminatorKind::SwitchInt { .. } => {
+                    debug!("OOPS I NEED SWITCHINT");
+                }
+
                 _ => panic!("unimplemented terminator {:?}", bb.terminator().kind)
             }
         }
@@ -655,7 +660,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         BinOp::Le => BinaryenLeSInt32(),
                         BinOp::Gt => BinaryenGtSInt32(),
                         BinOp::Ge => BinaryenGeSInt32(),
-                        _ => panic!("unimplemented BinOp: {:?}", op)
+                        BinOp::Rem => BinaryenRemSInt32(),
+                        BinOp::BitAnd => BinaryenAndInt32(),
+                        BinOp::BitOr => BinaryenOrInt32(),
+                        BinOp::Shr => BinaryenShrSInt32(),
+                        BinOp::Shl => BinaryenShlInt32(),                        
+                        BinOp::BitXor => BinaryenXorInt32(),
+                        // _ => panic!("unimplemented BinOp: {:?}", op)
                     };
 
                     let op = BinaryenBinary(self.module, op, left, right);
@@ -891,7 +902,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         if base.offset.is_none() {
                             return BinaryenLvalue::new(base.index, None, LvalueExtra::None);
                         }
-                        panic!("unimplemented Deref {:?}", lvalue);
+                        // TMP: doesn't work, just to see what libcore requires to compile
+                        return BinaryenLvalue::new(base.index, None, LvalueExtra::None);
+                        // panic!("unimplemented Deref {:?}", lvalue);
                     }
                     ProjectionElem::Field(ref field, _) => {
                         let variant = match *base_layout {
@@ -958,21 +971,45 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         // TODO: handle more Rust types here
                         unsafe {
                             let lit = match *value {
+                                ConstVal::Integral(ConstInt::I8(val)) => BinaryenLiteralInt32(val as i32),
+                                ConstVal::Integral(ConstInt::I16(val)) => BinaryenLiteralInt32(val as i32),
+
                                 ConstVal::Integral(ConstInt::Isize(ConstIsize::Is32(val))) |
                                 ConstVal::Integral(ConstInt::I32(val)) => {
                                     BinaryenLiteralInt32(val)
                                 }
-                                // TODO: Since we're at the wasm32 stage, and until wasm64, it's probably best if isize is always i32 ?
+                                // TODO: Since we're at the wasm32 stage, and until wasm64, it's probably best if isize is always i32
                                 ConstVal::Integral(ConstInt::Isize(ConstIsize::Is64(val))) => {
                                     BinaryenLiteralInt32(val as i32)
                                 }
                                 ConstVal::Integral(ConstInt::I64(val)) => {
                                     BinaryenLiteralInt64(val)
                                 }
+
+                                ConstVal::Integral(ConstInt::U8(val)) => BinaryenLiteralInt32(val as i32),
+                                ConstVal::Integral(ConstInt::U16(val)) => BinaryenLiteralInt32(val as i32),
+                                ConstVal::Integral(ConstInt::Usize(ConstUsize::Us32(val))) |
+                                ConstVal::Integral(ConstInt::U32(val)) => {
+                                    BinaryenLiteralInt32(val as i32)
+                                }
+                                ConstVal::Integral(ConstInt::U64(val)) => BinaryenLiteralInt64(val as i64),
+                                // TODO: Since we're at the wasm32 stage, and until wasm64, it's probably best if usize is always u32
+                                ConstVal::Integral(ConstInt::Usize(ConstUsize::Us64(val))) => {
+                                    BinaryenLiteralInt32(val as i32)
+                                }
+
                                 ConstVal::Bool(val) => {
                                     let val = if val { 1 } else { 0 };
                                     BinaryenLiteralInt32(val)
                                 }
+                                ConstVal::Float(val) => {
+                                    BinaryenLiteralFloat64(val)
+                                }
+
+                                ConstVal::Str(_) => {
+                                    BinaryenLiteralInt32(-666)
+                                }
+
                                 _ => panic!("unimplemented value: {:?}", value)
                             };
                             BinaryenConst(self.module, lit)
@@ -980,7 +1017,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                     }
                     Literal::Promoted { .. } => {
-                        panic!("unimplemented Promoted Literal: {:?}", c)
+                        // panic!("unimplemented Promoted Literal: {:?}", c)
+                        unsafe {
+                            BinaryenNop(self.module)
+                        }
                     }
                     _ => panic!("unimplemented Constant Literal {:?}", c)
                 }
@@ -1032,64 +1072,80 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             let fn_sig;
                             let mut call_kind = BinaryenCallKind::Direct;
 
-                            match fn_name.as_ref() {
-                                "wasm::::print_i32" | "wasm::::_print_i32" => {
-                                    // extern wasm functions
-                                    fn_sig = sig.clone();
-                                    call_kind = BinaryenCallKind::Import;
-                                    self.import_wasm_extern(fn_did, sig);
-                                }
-                                _ => {
-                                    let is_trait_method = substs.self_ty().is_some();
-
-                                    let (nid, substs, sig) = if !is_trait_method {
-                                        let nid = self.tcx.map.as_local_node_id(fn_did).expect("");
-                                        (nid, *substs, sig)
-                                    } else {
-                                        let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.tcx, fn_did, substs);
-                                        let nid = self.tcx.map.as_local_node_id(resolved_def_id).expect("");
-                                        let ty = self.tcx.lookup_item_type(resolved_def_id).ty;
-                                        // TODO: investigate rustc trans use of liberate_bound_regions or similar here
-                                        let sig = ty.fn_sig().skip_binder();
-
-                                        fn_did = resolved_def_id;
-                                        (nid, resolved_substs, sig)
-                                    };
-
-                                    let mir = &self.mir_map.map[&nid];
-
-                                    fn_sig = monomorphize::apply_param_substs(self.tcx, substs, sig);
-
-                                    // mark the fn defid seen to not have translated twice
-                                    // TODO: verify this more thoroughly, works for our limited tests right now
-                                    if *sig != fn_sig {
-                                        let fn_name = sanitize_symbol(&self.tcx.item_path_str(fn_did));
-                                        let fn_name = CString::new(fn_name).expect("");
-                                        self.fun_names.insert((fn_did, sig.clone()), fn_name);
+                            if fn_name.starts_with("intrinsics::::") {
+                                fn_sig = sig.clone();
+                                let name = fn_name[14..].to_string();
+                                debug!("tmp - faking the existance of the intrinsic: '{}'", name);
+                                let name = CString::new(name).expect("");
+                                self.fun_names.insert((fn_did, sig.clone()), name);
+                            } else {
+                                match fn_name.as_ref() {
+                                    "wasm::::print_i32" | "wasm::::_print_i32" => {
+                                        // extern wasm functions
+                                        fn_sig = sig.clone();
+                                        call_kind = BinaryenCallKind::Import;
+                                        self.import_wasm_extern(fn_did, sig);
                                     }
+                                    _ => {
+                                        let is_trait_method = substs.self_ty().is_some();
 
-                                    // This simple check is also done in trans() but doing it here helps have a clearer debug log
-                                    if !self.fun_names.contains_key(&(fn_did, fn_sig.clone())) {
-                                        let mut ctxt = BinaryenFnCtxt {
-                                            tcx: self.tcx,
-                                            mir_map: self.mir_map,
-                                            mir: mir,
-                                            did: fn_did,
-                                            sig: &fn_sig,
-                                            module: self.module,
-                                            entry_fn: self.entry_fn,
-                                            fun_types: &mut self.fun_types,
-                                            fun_names: &mut self.fun_names,
-                                            c_strings: &mut self.c_strings,
+                                        let (nid, substs, sig) = if !is_trait_method {
+                                            let nid = self.tcx.map.as_local_node_id(fn_did).expect("");
+                                            (nid, *substs, sig)
+                                        } else {
+                                            let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.tcx, fn_did, substs);
+                                            let nid = self.tcx.map.as_local_node_id(resolved_def_id).expect("");
+                                            let ty = self.tcx.lookup_item_type(resolved_def_id).ty;
+                                            // TODO: investigate rustc trans use of liberate_bound_regions or similar here
+                                            let sig = ty.fn_sig().skip_binder();
+
+                                            fn_did = resolved_def_id;
+                                            (nid, resolved_substs, sig)
                                         };
 
-                                        debug!("translating monomorphized fn {:?}", self.tcx.item_path_str(fn_did));
-                                        ctxt.trans();
-                                        debug!("done translating monomorphized {:?}, continuing translation of fn {:?}",
-                                            self.tcx.item_path_str(fn_did), self.tcx.item_path_str(self.did));
+                                        // let mir = &self.mir_map.map[&nid];
+
+                                        let mir = &self.mir_map.map.get(&nid);
+                                        if mir.is_none() {
+                                            panic!("MIR code not found for fn '{}'", fn_name);
+                                        }
+                                        let mir = mir.unwrap();
+
+                                        fn_sig = monomorphize::apply_param_substs(self.tcx, substs, sig);
+
+                                        // mark the fn defid seen to not have translated twice
+                                        // TODO: verify this more thoroughly, works for our limited tests right now
+                                        if *sig != fn_sig {
+                                            let fn_name = sanitize_symbol(&self.tcx.item_path_str(fn_did));
+                                            let fn_name = CString::new(fn_name).expect("");
+                                            self.fun_names.insert((fn_did, sig.clone()), fn_name);
+                                        }
+
+                                        // This simple check is also done in trans() but doing it here helps have a clearer debug log
+                                        if !self.fun_names.contains_key(&(fn_did, fn_sig.clone())) {
+                                            let mut ctxt = BinaryenFnCtxt {
+                                                tcx: self.tcx,
+                                                mir_map: self.mir_map,
+                                                mir: mir,
+                                                did: fn_did,
+                                                sig: &fn_sig,
+                                                module: self.module,
+                                                entry_fn: self.entry_fn,
+                                                fun_types: &mut self.fun_types,
+                                                fun_names: &mut self.fun_names,
+                                                c_strings: &mut self.c_strings,
+                                            };
+
+                                            debug!("translating monomorphized fn {:?}", self.tcx.item_path_str(fn_did));
+                                            ctxt.trans();
+                                            debug!("done translating monomorphized {:?}, continuing translation of fn {:?}",
+                                                self.tcx.item_path_str(fn_did), self.tcx.item_path_str(self.did));
+                                        }
                                     }
                                 }
                             }
+
+                            
 
                             let ret_ty = match fn_sig.output {
                                 ty::FnOutput::FnConverging(ref t) => {
