@@ -159,7 +159,7 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
     entry_fn: Option<NodeId>,
     fun_types: &'v mut HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     fun_names: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), CString>,
-    c_strings: &'v mut Vec<CString>,    
+    c_strings: &'v mut Vec<CString>,
 }
 
 impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
@@ -402,6 +402,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             _ => {
                                 debug!("emitting Call to fn {:?}", func);
                                 binaryen_stmts.push(b_call);
+                                // TODO: check if the following node is required for validation since
+                                //       we won't be returning from the previous call
+                                // binaryen_stmts.push(BinaryenUnreachable(self.module));
                             }
                         }
                     } else {
@@ -517,7 +520,20 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     debug!("OOPS I NEED SWITCHINT");
                 }
 
-                _ => panic!("unimplemented terminator {:?}", bb.terminator().kind)
+                TerminatorKind::Drop { .. } => {
+                    debug!("Ignoring Drop terminator");
+                    // in trans: https://github.com/rust-lang/rust/blob/master/src/librustc_trans/glue.rs#L325-L370
+                }
+
+                TerminatorKind::Resume => {
+                    debug!("Ignoring Resume terminator");
+                }
+
+                // TerminatorKind::Unreachable => {
+                //     panic!("");
+                // }
+
+                // _ => panic!("unimplemented terminator {:?}", bb.terminator().kind)
             }
         }
 
@@ -580,6 +596,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     BinaryenIndex(vars.len() as _),
                                     body);
             } else {
+                // TODO: drop + unwind ?
                 debug!("emitting Unreachable function for panic lang item");
                 BinaryenAddFunction(self.module, fn_name_ptr,
                                     *self.fun_types.get(self.sig).unwrap(),
@@ -608,17 +625,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
     fn trans_assignment(&mut self, lvalue: &Lvalue<'tcx>, rvalue: &Rvalue<'tcx>, statements: &mut Vec<BinaryenExpressionRef>) {
         let dest = self.trans_lval(lvalue);
         let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
-
-        // debug!("trans_assignment '{:?} = {:?}' - SUBSTS: {:?}", lvalue, rvalue, self.substs);
-        let dest_layout = self.type_layout(dest_ty);
-
-        // // TODO(solson): Is this inefficient? Needs investigation.
-        // let ty = monomorphize::apply_ty_substs(self.tcx, self.substs, dest_ty);
-
-        // let dest_layout = self.tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
-        //     // TODO(solson): Report this error properly.
-        //     ty.layout(&infcx).unwrap()
-        // });
+        let dest_layout = self.type_layout_with_substs(dest_ty, self.substs);
 
         match *rvalue {
             Rvalue::Use(ref operand) => {
@@ -1048,24 +1055,22 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
     #[inline]
     fn type_size(&self, ty: Ty<'tcx>) -> usize {
-        let substs = self.tcx.mk_substs(Substs::empty());
-        self.type_size_with_substs(ty, substs)
+        self.type_size_with_substs(ty, self.substs)
     }
 
     // Imported from miri
     #[inline]
-    fn type_size_with_substs(&self, ty: Ty<'tcx>, substs: &'tcx Substs<'tcx>) -> usize {
+    fn type_size_with_substs(&self, ty: Ty<'tcx>, substs: &'v Substs<'tcx>) -> usize {
         self.type_layout_with_substs(ty, substs).size(&self.tcx.data_layout).bytes() as usize
     }
 
     #[inline]
     fn type_layout(&self, ty: Ty<'tcx>) -> &'tcx Layout {
-        let substs = self.tcx.mk_substs(Substs::empty());
-        self.type_layout_with_substs(ty, substs)
+        self.type_layout_with_substs(ty, self.substs)
     }
 
     // Imported from miri and slightly modified to adapt to our monomorphize api
-    fn type_layout_with_substs(&self, ty: Ty<'tcx>, substs: &'tcx Substs<'tcx>) -> &'tcx Layout {
+    fn type_layout_with_substs(&self, ty: Ty<'tcx>, substs: &'v Substs<'tcx>) -> &'tcx Layout {
         // TODO(solson): Is this inefficient? Needs investigation.
         let ty = monomorphize::apply_ty_substs(self.tcx, substs, ty);
 
@@ -1117,6 +1122,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                             let nid = self.tcx.map.as_local_node_id(fn_did).expect("");
                                             (nid, *substs, sig)
                                         } else {
+                                            debug!("{} is a trait method that needs resolving", fn_name);
+
                                             let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.tcx, fn_did, substs);
                                             let nid = self.tcx.map.as_local_node_id(resolved_def_id).expect("");
                                             let ty = self.tcx.lookup_item_type(resolved_def_id).ty;
@@ -1169,8 +1176,6 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     }
                                 }
                             }
-
-
 
                             let ret_ty = match fn_sig.output {
                                 ty::FnOutput::FnConverging(ref t) => {
