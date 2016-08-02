@@ -19,7 +19,7 @@ use ptr;
 ///
 /// See: https://131002.net/siphash/
 #[unstable(feature = "sip_hash_13", issue = "34767")]
-#[derive(Debug, Clone, Default)]
+#[derive(/*Debug,*/ Clone, Default)]
 pub struct SipHasher13 {
     hasher: Hasher<Sip13Rounds>,
 }
@@ -28,7 +28,7 @@ pub struct SipHasher13 {
 ///
 /// See: https://131002.net/siphash/
 #[unstable(feature = "sip_hash_13", issue = "34767")]
-#[derive(Debug, Clone, Default)]
+#[derive(/*Debug,*/ Clone, Default)]
 pub struct SipHasher24 {
     hasher: Hasher<Sip24Rounds>,
 }
@@ -49,10 +49,10 @@ pub struct SipHasher24 {
 /// it is not intended for cryptographic purposes. As such, all
 /// cryptographic uses of this implementation are _strongly discouraged_.
 #[stable(feature = "rust1", since = "1.0.0")]
-#[derive(Debug, Clone, Default)]
+#[derive(/*Debug,*/ Clone, Default)]
 pub struct SipHasher(SipHasher24);
 
-#[derive(Debug)]
+// #[derive(Debug)]
 struct Hasher<S: Sip> {
     k0: u64,
     k1: u64,
@@ -63,7 +63,7 @@ struct Hasher<S: Sip> {
     _marker: PhantomData<S>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(/*Debug,*/ Clone, Copy)]
 struct State {
     // v0, v2 and v1, v3 show up in pairs in the algorithm,
     // and simd implementations of SipHash will use vectors
@@ -347,7 +347,7 @@ trait Sip {
     fn d_rounds(&mut State);
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(/*Debug,*/ Clone, Default)]
 struct Sip13Rounds;
 
 impl Sip for Sip13Rounds {
@@ -364,7 +364,7 @@ impl Sip for Sip13Rounds {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(/*Debug,*/ Clone, Default)]
 struct Sip24Rounds;
 
 impl Sip for Sip24Rounds {

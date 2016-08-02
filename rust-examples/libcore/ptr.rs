@@ -19,8 +19,8 @@
 use clone::Clone;
 use intrinsics;
 use ops::{CoerceUnsized, Deref};
-use fmt;
-use hash;
+// use fmt;
+// use hash;
 use option::Option::{self, Some, None};
 use marker::{Copy, PhantomData, Send, Sized, Sync, Unsize};
 use mem;
@@ -547,26 +547,26 @@ macro_rules! fnptr_impls_safety_abi {
             }
         }
 
-        #[stable(feature = "fnptr_impls", since = "1.4.0")]
-        impl<Ret, $($Arg),*> hash::Hash for $FnTy {
-            fn hash<HH: hash::Hasher>(&self, state: &mut HH) {
-                state.write_usize(*self as usize)
-            }
-        }
-
-        #[stable(feature = "fnptr_impls", since = "1.4.0")]
-        impl<Ret, $($Arg),*> fmt::Pointer for $FnTy {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                fmt::Pointer::fmt(&(*self as *const ()), f)
-            }
-        }
-
-        #[stable(feature = "fnptr_impls", since = "1.4.0")]
-        impl<Ret, $($Arg),*> fmt::Debug for $FnTy {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                fmt::Pointer::fmt(&(*self as *const ()), f)
-            }
-        }
+        // #[stable(feature = "fnptr_impls", since = "1.4.0")]
+        // impl<Ret, $($Arg),*> hash::Hash for $FnTy {
+        //     fn hash<HH: hash::Hasher>(&self, state: &mut HH) {
+        //         state.write_usize(*self as usize)
+        //     }
+        // }
+        //
+        // #[stable(feature = "fnptr_impls", since = "1.4.0")]
+        // impl<Ret, $($Arg),*> fmt::Pointer for $FnTy {
+        //     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        //         fmt::Pointer::fmt(&(*self as *const ()), f)
+        //     }
+        // }
+        //
+        // #[stable(feature = "fnptr_impls", since = "1.4.0")]
+        // impl<Ret, $($Arg),*> fmt::Debug for $FnTy {
+        //     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        //         fmt::Pointer::fmt(&(*self as *const ()), f)
+        //     }
+        // }
     }
 }
 
@@ -741,12 +741,12 @@ impl<T:?Sized> Deref for Unique<T> {
     }
 }
 
-#[stable(feature = "rust1", since = "1.0.0")]
-impl<T> fmt::Pointer for Unique<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Pointer::fmt(&*self.pointer, f)
-    }
-}
+// #[stable(feature = "rust1", since = "1.0.0")]
+// impl<T> fmt::Pointer for Unique<T> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         fmt::Pointer::fmt(&*self.pointer, f)
+//     }
+// }
 
 /// A wrapper around a raw non-null `*mut T` that indicates that the possessor
 /// of this wrapper has shared ownership of the referent. Useful for
@@ -810,9 +810,9 @@ impl<T: ?Sized> Deref for Shared<T> {
     }
 }
 
-#[unstable(feature = "shared", issue = "27730")]
-impl<T> fmt::Pointer for Shared<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Pointer::fmt(&*self.pointer, f)
-    }
-}
+// #[unstable(feature = "shared", issue = "27730")]
+// impl<T> fmt::Pointer for Shared<T> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         fmt::Pointer::fmt(&*self.pointer, f)
+//     }
+// }

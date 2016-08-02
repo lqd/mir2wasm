@@ -632,10 +632,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 let operand = self.trans_operand(operand);
                 unsafe {
                     let op = match *op {
-                        UnOp::Not => BinaryenEqZInt32(),
-                        _ => panic!("unimplemented UnOp: {:?}", op)
+                        UnOp::Not => BinaryenUnary(self.module, BinaryenEqZInt32(), operand),
+                        UnOp::Neg => BinaryenBinary(self.module, BinaryenSubInt32(), BinaryenConst(self.module, BinaryenLiteralInt32(0)), operand),
+                        // _ => panic!("unimplemented UnOp: {:?}", op)
                     };
-                    let op = BinaryenUnary(self.module, op, operand);
+                    // let op = BinaryenUnary(self.module, op, operand);
                     let statement = BinaryenSetLocal(self.module, dest.index, op);
                     statements.push(statement);
                 }
@@ -664,7 +665,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         BinOp::BitAnd => BinaryenAndInt32(),
                         BinOp::BitOr => BinaryenOrInt32(),
                         BinOp::Shr => BinaryenShrSInt32(),
-                        BinOp::Shl => BinaryenShlInt32(),                        
+                        BinOp::Shl => BinaryenShlInt32(),
                         BinOp::BitXor => BinaryenXorInt32(),
                         // _ => panic!("unimplemented BinOp: {:?}", op)
                     };
@@ -1006,7 +1007,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     BinaryenLiteralFloat64(val)
                                 }
 
-                                ConstVal::Str(_) => {
+                                ConstVal::Char(_) | ConstVal::Str(_) => {
                                     BinaryenLiteralInt32(-666)
                                 }
 
@@ -1078,6 +1079,12 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 debug!("tmp - faking the existance of the intrinsic: '{}'", name);
                                 let name = CString::new(name).expect("");
                                 self.fun_names.insert((fn_did, sig.clone()), name);
+                            } else if fn_name.starts_with("panicking::panic_fmt::::") {
+                                fn_sig = sig.clone();
+                                let name = fn_name[24..].to_string();
+                                debug!("tmp - faking the existance of the intrinsic: '{}'", name);
+                                let name = CString::new(name).expect("");
+                                self.fun_names.insert((fn_did, sig.clone()), name);
                             } else {
                                 match fn_name.as_ref() {
                                     "wasm::::print_i32" | "wasm::::_print_i32" => {
@@ -1145,7 +1152,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 }
                             }
 
-                            
+
 
                             let ret_ty = match fn_sig.output {
                                 ty::FnOutput::FnConverging(ref t) => {

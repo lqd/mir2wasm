@@ -15,7 +15,7 @@
 use char::CharExt;
 use cmp::PartialOrd;
 use convert::{From, TryFrom};
-use fmt;
+// use fmt;
 use intrinsics;
 use marker::{Copy, Sized};
 use mem::size_of;
@@ -51,55 +51,55 @@ use slice::SliceExt;
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default, Hash)]
 pub struct Wrapping<T>(#[stable(feature = "rust1", since = "1.0.0")] pub T);
 
-#[stable(feature = "rust1", since = "1.0.0")]
-impl<T: fmt::Debug> fmt::Debug for Wrapping<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-#[stable(feature = "wrapping_display", since = "1.10.0")]
-impl<T: fmt::Display> fmt::Display for Wrapping<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-#[stable(feature = "wrapping_fmt", since = "1.11.0")]
-impl<T: fmt::Binary> fmt::Binary for Wrapping<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-#[stable(feature = "wrapping_fmt", since = "1.11.0")]
-impl<T: fmt::Octal> fmt::Octal for Wrapping<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-#[stable(feature = "wrapping_fmt", since = "1.11.0")]
-impl<T: fmt::LowerHex> fmt::LowerHex for Wrapping<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-#[stable(feature = "wrapping_fmt", since = "1.11.0")]
-impl<T: fmt::UpperHex> fmt::UpperHex for Wrapping<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
+// #[stable(feature = "rust1", since = "1.0.0")]
+// impl<T: fmt::Debug> fmt::Debug for Wrapping<T> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         self.0.fmt(f)
+//     }
+// }
+//
+// #[stable(feature = "wrapping_display", since = "1.10.0")]
+// impl<T: fmt::Display> fmt::Display for Wrapping<T> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         self.0.fmt(f)
+//     }
+// }
+//
+// #[stable(feature = "wrapping_fmt", since = "1.11.0")]
+// impl<T: fmt::Binary> fmt::Binary for Wrapping<T> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         self.0.fmt(f)
+//     }
+// }
+//
+// #[stable(feature = "wrapping_fmt", since = "1.11.0")]
+// impl<T: fmt::Octal> fmt::Octal for Wrapping<T> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         self.0.fmt(f)
+//     }
+// }
+//
+// #[stable(feature = "wrapping_fmt", since = "1.11.0")]
+// impl<T: fmt::LowerHex> fmt::LowerHex for Wrapping<T> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         self.0.fmt(f)
+//     }
+// }
+//
+// #[stable(feature = "wrapping_fmt", since = "1.11.0")]
+// impl<T: fmt::UpperHex> fmt::UpperHex for Wrapping<T> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         self.0.fmt(f)
+//     }
+// }
 
 mod wrapping;
 
 // All these modules are technically private and only exposed for libcoretest:
-pub mod flt2dec;
-pub mod dec2flt;
-pub mod bignum;
-pub mod diy_float;
+// pub mod flt2dec;
+// pub mod dec2flt;
+// pub mod bignum;
+// pub mod diy_float;
 
 /// Types that have a "zero" value.
 ///
@@ -2411,7 +2411,7 @@ impl usize {
 /// assert_eq!(nan.classify(), FpCategory::Nan);
 /// assert_eq!(sub.classify(), FpCategory::Subnormal);
 /// ```
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq/*, Debug*/)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub enum FpCategory {
     /// "Not a Number", often obtained by dividing by zero.
@@ -2563,7 +2563,7 @@ from_str_radix_int_impl! { isize i8 i16 i32 i64 usize u8 u16 u32 u64 }
 
 /// The error type returned when a checked integral type conversion fails.
 #[unstable(feature = "try_from", issue = "33417")]
-#[derive(Debug, Copy, Clone)]
+#[derive(/*Debug,*/ Copy, Clone)]
 pub struct TryFromIntError(());
 
 impl TryFromIntError {
@@ -2577,12 +2577,12 @@ impl TryFromIntError {
     }
 }
 
-#[unstable(feature = "try_from", issue = "33417")]
-impl fmt::Display for TryFromIntError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        self.__description().fmt(fmt)
-    }
-}
+// #[unstable(feature = "try_from", issue = "33417")]
+// impl fmt::Display for TryFromIntError {
+//     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+//         self.__description().fmt(fmt)
+//     }
+// }
 
 macro_rules! same_sign_from_int_impl {
     ($storage:ty, $target:ty, $($source:ty),*) => {$(
@@ -2754,11 +2754,11 @@ fn from_str_radix<T: FromStrRadixHelper>(src: &str, radix: u32)
 /// on the primitive integer types, such as [`i8::from_str_radix()`].
 ///
 /// [`i8::from_str_radix()`]: ../../std/primitive.i8.html#method.from_str_radix
-#[derive(Debug, Clone, PartialEq)]
+#[derive(/*Debug,*/ Clone, PartialEq)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct ParseIntError { kind: IntErrorKind }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(/*Debug,*/ Clone, PartialEq)]
 enum IntErrorKind {
     Empty,
     InvalidDigit,
@@ -2782,12 +2782,12 @@ impl ParseIntError {
     }
 }
 
-#[stable(feature = "rust1", since = "1.0.0")]
-impl fmt::Display for ParseIntError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.__description().fmt(f)
-    }
-}
+// #[stable(feature = "rust1", since = "1.0.0")]
+// impl fmt::Display for ParseIntError {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         self.__description().fmt(f)
+//     }
+// }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use num::dec2flt::ParseFloatError;

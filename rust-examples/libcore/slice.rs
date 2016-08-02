@@ -38,7 +38,7 @@ use cmp::{Ordering, PartialEq, PartialOrd, Eq, Ord};
 use cmp::Ordering::{Less, Equal, Greater};
 use cmp;
 use default::Default;
-use fmt;
+// use fmt;
 use intrinsics::assume;
 use iter::*;
 use ops::{FnMut, self};
@@ -927,14 +927,14 @@ pub struct Iter<'a, T: 'a> {
     _marker: marker::PhantomData<&'a T>,
 }
 
-#[stable(feature = "core_impl_debug", since = "1.9.0")]
-impl<'a, T: 'a + fmt::Debug> fmt::Debug for Iter<'a, T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("Iter")
-            .field(&self.as_slice())
-            .finish()
-    }
-}
+// #[stable(feature = "core_impl_debug", since = "1.9.0")]
+// impl<'a, T: 'a + fmt::Debug> fmt::Debug for Iter<'a, T> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.debug_tuple("Iter")
+//             .field(&self.as_slice())
+//             .finish()
+//     }
+// }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 unsafe impl<'a, T: Sync> Sync for Iter<'a, T> {}
@@ -1027,14 +1027,14 @@ pub struct IterMut<'a, T: 'a> {
     _marker: marker::PhantomData<&'a mut T>,
 }
 
-#[stable(feature = "core_impl_debug", since = "1.9.0")]
-impl<'a, T: 'a + fmt::Debug> fmt::Debug for IterMut<'a, T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("IterMut")
-            .field(&make_slice!(self.ptr, self.end))
-            .finish()
-    }
-}
+// #[stable(feature = "core_impl_debug", since = "1.9.0")]
+// impl<'a, T: 'a + fmt::Debug> fmt::Debug for IterMut<'a, T> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.debug_tuple("IterMut")
+//             .field(&make_slice!(self.ptr, self.end))
+//             .finish()
+//     }
+// }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 unsafe impl<'a, T: Sync> Sync for IterMut<'a, T> {}
@@ -1120,15 +1120,15 @@ pub struct Split<'a, T:'a, P> where P: FnMut(&T) -> bool {
     finished: bool
 }
 
-#[stable(feature = "core_impl_debug", since = "1.9.0")]
-impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for Split<'a, T, P> where P: FnMut(&T) -> bool {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Split")
-            .field("v", &self.v)
-            .field("finished", &self.finished)
-            .finish()
-    }
-}
+// #[stable(feature = "core_impl_debug", since = "1.9.0")]
+// impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for Split<'a, T, P> where P: FnMut(&T) -> bool {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.debug_struct("Split")
+//             .field("v", &self.v)
+//             .field("finished", &self.finished)
+//             .finish()
+//     }
+// }
 
 // FIXME(#19839) Remove in favor of `#[derive(Clone)]`
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1203,15 +1203,15 @@ pub struct SplitMut<'a, T:'a, P> where P: FnMut(&T) -> bool {
     finished: bool
 }
 
-#[stable(feature = "core_impl_debug", since = "1.9.0")]
-impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for SplitMut<'a, T, P> where P: FnMut(&T) -> bool {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("SplitMut")
-            .field("v", &self.v)
-            .field("finished", &self.finished)
-            .finish()
-    }
-}
+// #[stable(feature = "core_impl_debug", since = "1.9.0")]
+// impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for SplitMut<'a, T, P> where P: FnMut(&T) -> bool {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.debug_struct("SplitMut")
+//             .field("v", &self.v)
+//             .field("finished", &self.finished)
+//             .finish()
+//     }
+// }
 
 impl<'a, T, P> SplitIter for SplitMut<'a, T, P> where P: FnMut(&T) -> bool {
     #[inline]
@@ -1287,7 +1287,7 @@ impl<'a, T, P> DoubleEndedIterator for SplitMut<'a, T, P> where
 /// An private iterator over subslices separated by elements that
 /// match a predicate function, splitting at most a fixed number of
 /// times.
-#[derive(Debug)]
+// #[derive(Debug)]
 struct GenericSplitN<I> {
     iter: I,
     count: usize,
@@ -1323,14 +1323,14 @@ pub struct SplitN<'a, T: 'a, P> where P: FnMut(&T) -> bool {
     inner: GenericSplitN<Split<'a, T, P>>
 }
 
-#[stable(feature = "core_impl_debug", since = "1.9.0")]
-impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for SplitN<'a, T, P> where P: FnMut(&T) -> bool {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("SplitN")
-            .field("inner", &self.inner)
-            .finish()
-    }
-}
+// #[stable(feature = "core_impl_debug", since = "1.9.0")]
+// impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for SplitN<'a, T, P> where P: FnMut(&T) -> bool {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.debug_struct("SplitN")
+//             .field("inner", &self.inner)
+//             .finish()
+//     }
+// }
 
 /// An iterator over subslices separated by elements that match a
 /// predicate function, limited to a given number of splits, starting
@@ -1340,14 +1340,14 @@ pub struct RSplitN<'a, T: 'a, P> where P: FnMut(&T) -> bool {
     inner: GenericSplitN<Split<'a, T, P>>
 }
 
-#[stable(feature = "core_impl_debug", since = "1.9.0")]
-impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for RSplitN<'a, T, P> where P: FnMut(&T) -> bool {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("RSplitN")
-            .field("inner", &self.inner)
-            .finish()
-    }
-}
+// #[stable(feature = "core_impl_debug", since = "1.9.0")]
+// impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for RSplitN<'a, T, P> where P: FnMut(&T) -> bool {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.debug_struct("RSplitN")
+//             .field("inner", &self.inner)
+//             .finish()
+//     }
+// }
 
 /// An iterator over subslices separated by elements that match a predicate
 /// function, limited to a given number of splits.
@@ -1356,14 +1356,14 @@ pub struct SplitNMut<'a, T: 'a, P> where P: FnMut(&T) -> bool {
     inner: GenericSplitN<SplitMut<'a, T, P>>
 }
 
-#[stable(feature = "core_impl_debug", since = "1.9.0")]
-impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for SplitNMut<'a, T, P> where P: FnMut(&T) -> bool {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("SplitNMut")
-            .field("inner", &self.inner)
-            .finish()
-    }
-}
+// #[stable(feature = "core_impl_debug", since = "1.9.0")]
+// impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for SplitNMut<'a, T, P> where P: FnMut(&T) -> bool {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.debug_struct("SplitNMut")
+//             .field("inner", &self.inner)
+//             .finish()
+//     }
+// }
 
 /// An iterator over subslices separated by elements that match a
 /// predicate function, limited to a given number of splits, starting
@@ -1373,14 +1373,14 @@ pub struct RSplitNMut<'a, T: 'a, P> where P: FnMut(&T) -> bool {
     inner: GenericSplitN<SplitMut<'a, T, P>>
 }
 
-#[stable(feature = "core_impl_debug", since = "1.9.0")]
-impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for RSplitNMut<'a, T, P> where P: FnMut(&T) -> bool {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("RSplitNMut")
-            .field("inner", &self.inner)
-            .finish()
-    }
-}
+// #[stable(feature = "core_impl_debug", since = "1.9.0")]
+// impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for RSplitNMut<'a, T, P> where P: FnMut(&T) -> bool {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.debug_struct("RSplitNMut")
+//             .field("inner", &self.inner)
+//             .finish()
+//     }
+// }
 
 macro_rules! forward_iterator {
     ($name:ident: $elem:ident, $iter_of:ty) => {
@@ -1409,7 +1409,7 @@ forward_iterator! { SplitNMut: T, &'a mut [T] }
 forward_iterator! { RSplitNMut: T, &'a mut [T] }
 
 /// An iterator over overlapping subslices of length `size`.
-#[derive(Debug)]
+// #[derive(Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Windows<'a, T:'a> {
     v: &'a [T],
@@ -1503,7 +1503,7 @@ impl<'a, T> ExactSizeIterator for Windows<'a, T> {}
 ///
 /// When the slice len is not evenly divided by the chunk size, the last slice
 /// of the iteration will be the remainder.
-#[derive(Debug)]
+// #[derive(Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Chunks<'a, T:'a> {
     v: &'a [T],
@@ -1604,7 +1604,7 @@ impl<'a, T> ExactSizeIterator for Chunks<'a, T> {}
 /// An iterator over a slice in (non-overlapping) mutable chunks (`size`
 /// elements at a time). When the slice len is not evenly divided by the chunk
 /// size, the last slice of the iteration will be the remainder.
-#[derive(Debug)]
+// #[derive(Debug)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct ChunksMut<'a, T:'a> {
     v: &'a mut [T],

@@ -71,7 +71,7 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use fmt;
+// use fmt;
 use marker::Send;
 use mem::transmute;
 use option::Option::{self, Some, None};
@@ -124,22 +124,22 @@ impl<T: Reflect + 'static + ?Sized > Any for T {
 // Extension methods for Any trait objects.
 ///////////////////////////////////////////////////////////////////////////////
 
-#[stable(feature = "rust1", since = "1.0.0")]
-impl fmt::Debug for Any {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.pad("Any")
-    }
-}
+// #[stable(feature = "rust1", since = "1.0.0")]
+// impl fmt::Debug for Any {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.pad("Any")
+//     }
+// }
 
 // Ensure that the result of e.g. joining a thread can be printed and
 // hence used with `unwrap`. May eventually no longer be needed if
 // dispatch works with upcasting.
-#[stable(feature = "rust1", since = "1.0.0")]
-impl fmt::Debug for Any + Send {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.pad("Any")
-    }
-}
+// #[stable(feature = "rust1", since = "1.0.0")]
+// impl fmt::Debug for Any + Send {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.pad("Any")
+//     }
+// }
 
 impl Any {
     /// Returns true if the boxed type is the same as `T`.
@@ -351,7 +351,7 @@ impl Any+Send {
 ///
 /// A `TypeId` is currently only available for types which ascribe to `'static`,
 /// but this limitation may be removed in the future.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq/*, Debug, Hash*/)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct TypeId {
     t: u64,

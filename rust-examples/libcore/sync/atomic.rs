@@ -85,7 +85,7 @@ use cell::UnsafeCell;
 use result::Result::{self, Ok, Err};
 
 use default::Default;
-use fmt;
+// use fmt;
 
 /// A boolean type which can be safely shared between threads.
 #[cfg(target_has_atomic = "8")]
@@ -140,7 +140,7 @@ unsafe impl<T> Sync for AtomicPtr<T> {}
 /// Rust's memory orderings are [the same as
 /// LLVM's](http://llvm.org/docs/LangRef.html#memory-model-for-concurrent-operations).
 #[stable(feature = "rust1", since = "1.0.0")]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone/*, Debug*/)]
 pub enum Ordering {
     /// No ordering constraints, only atomic operations. Corresponds to LLVM's
     /// `Monotonic` ordering.
@@ -746,14 +746,14 @@ macro_rules! atomic_int {
             }
         }
 
-        #[$stable_debug]
-        impl fmt::Debug for $atomic_type {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.debug_tuple(stringify!($atomic_type))
-                 .field(&self.load(Ordering::SeqCst))
-                 .finish()
-            }
-        }
+        // #[$stable_debug]
+        // impl fmt::Debug for $atomic_type {
+        //     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        //         f.debug_tuple(stringify!($atomic_type))
+        //          .field(&self.load(Ordering::SeqCst))
+        //          .finish()
+        //     }
+        // }
 
         // Send is implicitly implemented.
         #[$stable]
@@ -1311,18 +1311,18 @@ pub fn fence(order: Ordering) {
 }
 
 
-#[cfg(target_has_atomic = "8")]
-#[stable(feature = "atomic_debug", since = "1.3.0")]
-impl fmt::Debug for AtomicBool {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("AtomicBool").field(&self.load(Ordering::SeqCst)).finish()
-    }
-}
-
-#[cfg(target_has_atomic = "ptr")]
-#[stable(feature = "atomic_debug", since = "1.3.0")]
-impl<T> fmt::Debug for AtomicPtr<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("AtomicPtr").field(&self.load(Ordering::SeqCst)).finish()
-    }
-}
+// #[cfg(target_has_atomic = "8")]
+// #[stable(feature = "atomic_debug", since = "1.3.0")]
+// impl fmt::Debug for AtomicBool {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.debug_tuple("AtomicBool").field(&self.load(Ordering::SeqCst)).finish()
+//     }
+// }
+//
+// #[cfg(target_has_atomic = "ptr")]
+// #[stable(feature = "atomic_debug", since = "1.3.0")]
+// impl<T> fmt::Debug for AtomicPtr<T> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.debug_tuple("AtomicPtr").field(&self.load(Ordering::SeqCst)).finish()
+//     }
+// }

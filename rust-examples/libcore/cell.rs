@@ -336,7 +336,7 @@ pub struct RefCell<T: ?Sized> {
 }
 
 /// An enumeration of values returned from the `state` method on a `RefCell<T>`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq/*, Debug*/)]
 #[unstable(feature = "borrow_state", issue = "27733")]
 pub enum BorrowState {
     /// The cell is currently being read, there is at least one active `borrow`.

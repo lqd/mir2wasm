@@ -20,8 +20,8 @@ use clone::Clone;
 use cmp;
 use default::Default;
 use option::Option;
-use hash::Hash;
-use hash::Hasher;
+// use hash::Hash;
+// use hash::Hasher;
 
 /// Types that can be transferred across thread boundaries.
 ///
@@ -241,12 +241,12 @@ impl<T: ?Sized> !Sync for *mut T { }
 
 macro_rules! impls{
     ($t: ident) => (
-        #[stable(feature = "rust1", since = "1.0.0")]
-        impl<T:?Sized> Hash for $t<T> {
-            #[inline]
-            fn hash<H: Hasher>(&self, _: &mut H) {
-            }
-        }
+        // #[stable(feature = "rust1", since = "1.0.0")]
+        // impl<T:?Sized> Hash for $t<T> {
+        //     #[inline]
+        //     fn hash<H: Hasher>(&self, _: &mut H) {
+        //     }
+        // }
 
         #[stable(feature = "rust1", since = "1.0.0")]
         impl<T:?Sized> cmp::PartialEq for $t<T> {
