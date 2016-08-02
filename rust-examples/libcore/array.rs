@@ -24,8 +24,8 @@ use clone::Clone;
 use cmp::{PartialEq, Eq, PartialOrd, Ord, Ordering};
 use convert::{AsRef, AsMut};
 use default::Default;
-use fmt;
-use hash::{Hash, self};
+// use fmt;
+// use hash::{Hash, self};
 use iter::IntoIterator;
 use marker::{Copy, Sized, Unsize};
 use option::Option;
@@ -133,19 +133,19 @@ macro_rules! array_impls {
                 }
             }
 
-            #[stable(feature = "rust1", since = "1.0.0")]
-            impl<T: Hash> Hash for [T; $N] {
-                fn hash<H: hash::Hasher>(&self, state: &mut H) {
-                    Hash::hash(&self[..], state)
-                }
-            }
+            // #[stable(feature = "rust1", since = "1.0.0")]
+            // impl<T: Hash> Hash for [T; $N] {
+            //     fn hash<H: hash::Hasher>(&self, state: &mut H) {
+            //         Hash::hash(&self[..], state)
+            //     }
+            // }
 
-            #[stable(feature = "rust1", since = "1.0.0")]
-            impl<T: fmt::Debug> fmt::Debug for [T; $N] {
-                fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                    fmt::Debug::fmt(&&self[..], f)
-                }
-            }
+            // #[stable(feature = "rust1", since = "1.0.0")]
+            // impl<T: fmt::Debug> fmt::Debug for [T; $N] {
+            //     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            //         fmt::Debug::fmt(&&self[..], f)
+            //     }
+            // }
 
             #[stable(feature = "rust1", since = "1.0.0")]
             impl<'a, T> IntoIterator for &'a [T; $N] {

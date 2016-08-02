@@ -31,23 +31,23 @@
 #[doc(no_inline)] pub use clone::Clone;
 #[stable(feature = "core_prelude", since = "1.4.0")]
 #[doc(no_inline)] pub use cmp::{PartialEq, PartialOrd, Eq, Ord};
-// #[stable(feature = "core_prelude", since = "1.4.0")]
-// #[doc(no_inline)] pub use convert::{AsRef, AsMut, Into, From};
+#[stable(feature = "core_prelude", since = "1.4.0")]
+#[doc(no_inline)] pub use convert::{AsRef, AsMut, Into, From};
 #[stable(feature = "core_prelude", since = "1.4.0")]
 #[doc(no_inline)] pub use default::Default;
-// #[stable(feature = "core_prelude", since = "1.4.0")]
-// #[doc(no_inline)] pub use iter::{Iterator, Extend, IntoIterator};
-// #[stable(feature = "core_prelude", since = "1.4.0")]
-// #[doc(no_inline)] pub use iter::{DoubleEndedIterator, ExactSizeIterator};
+#[stable(feature = "core_prelude", since = "1.4.0")]
+#[doc(no_inline)] pub use iter::{Iterator, Extend, IntoIterator};
+#[stable(feature = "core_prelude", since = "1.4.0")]
+#[doc(no_inline)] pub use iter::{DoubleEndedIterator, ExactSizeIterator};
 #[stable(feature = "core_prelude", since = "1.4.0")]
 #[doc(no_inline)] pub use option::Option::{self, Some, None};
-// #[stable(feature = "core_prelude", since = "1.4.0")]
-// #[doc(no_inline)] pub use result::Result::{self, Ok, Err};
+#[stable(feature = "core_prelude", since = "1.4.0")]
+#[doc(no_inline)] pub use result::Result::{self, Ok, Err};
 
 // Reexported extension traits for primitive types
-// #[stable(feature = "core_prelude", since = "1.4.0")]
-// #[doc(no_inline)] pub use slice::SliceExt;
-// #[stable(feature = "core_prelude", since = "1.4.0")]
-// #[doc(no_inline)] pub use str::StrExt;
-// #[stable(feature = "core_prelude", since = "1.4.0")]
-// #[doc(no_inline)] pub use char::CharExt;
+#[stable(feature = "core_prelude", since = "1.4.0")]
+#[doc(no_inline)] pub use slice::SliceExt;
+#[stable(feature = "core_prelude", since = "1.4.0")]
+#[doc(no_inline)] pub use str::StrExt;
+#[stable(feature = "core_prelude", since = "1.4.0")]
+#[doc(no_inline)] pub use char::CharExt;

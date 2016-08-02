@@ -415,7 +415,7 @@ impl CharExt for char {
 ///
 /// [`escape_unicode()`]: ../../std/primitive.char.html#method.escape_unicode
 /// [`char`]: ../../std/primitive.char.html
-#[derive(Clone, Debug)]
+#[derive(Clone/*, Debug*/)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct EscapeUnicode {
     c: char,
@@ -430,7 +430,7 @@ pub struct EscapeUnicode {
 // The enum values are ordered so that their representation is the
 // same as the remaining length (besides the hexadecimal digits). This
 // likely makes `len()` a single load from memory) and inline-worth.
-#[derive(Clone, Debug)]
+#[derive(Clone/*, Debug*/)]
 enum EscapeUnicodeState {
     Done,
     RightBrace,
@@ -523,13 +523,13 @@ impl ExactSizeIterator for EscapeUnicode {
 ///
 /// [`escape_default()`]: ../../std/primitive.char.html#method.escape_default
 /// [`char`]: ../../std/primitive.char.html
-#[derive(Clone, Debug)]
+#[derive(Clone/*, Debug*/)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct EscapeDefault {
     state: EscapeDefaultState
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone/*, Debug*/)]
 enum EscapeDefaultState {
     Done,
     Char(char),
@@ -624,7 +624,7 @@ impl ExactSizeIterator for EscapeDefault {
 /// [`escape_debug()`]: ../../std/primitive.char.html#method.escape_debug
 /// [`char`]: ../../std/primitive.char.html
 #[unstable(feature = "char_escape_debug", issue = "35068")]
-#[derive(Clone, Debug)]
+#[derive(Clone/*, Debug*/)]
 pub struct EscapeDebug(EscapeDefault);
 
 #[unstable(feature = "char_escape_debug", issue = "35068")]
@@ -642,7 +642,7 @@ impl ExactSizeIterator for EscapeDebug { }
 ///
 /// Constructed via the `.encode_utf8()` method on `char`.
 #[unstable(feature = "unicode", issue = "27784")]
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct EncodeUtf8 {
     buf: [u8; 4],
     pos: usize,
@@ -680,7 +680,7 @@ impl Iterator for EncodeUtf8 {
 ///
 /// Constructed via the `.encode_utf16()` method on `char`.
 #[unstable(feature = "unicode", issue = "27784")]
-#[derive(Debug)]
+// #[derive(Debug)]
 pub struct EncodeUtf16 {
     buf: [u16; 2],
     pos: usize,
@@ -718,7 +718,7 @@ impl Iterator for EncodeUtf16 {
 /// An iterator over an iterator of bytes of the characters the bytes represent
 /// as UTF-8
 #[unstable(feature = "decode_utf8", issue = "33906")]
-#[derive(Clone, Debug)]
+#[derive(Clone/*, Debug*/)]
 pub struct DecodeUtf8<I: Iterator<Item = u8>>(::iter::Peekable<I>);
 
 /// Decodes an `Iterator` of bytes as UTF-8.
@@ -730,7 +730,7 @@ pub fn decode_utf8<I: IntoIterator<Item = u8>>(i: I) -> DecodeUtf8<I::IntoIter> 
 
 /// `<DecodeUtf8 as Iterator>::next` returns this for an invalid input sequence.
 #[unstable(feature = "decode_utf8", issue = "33906")]
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq/*, Debug*/)]
 pub struct InvalidSequence(());
 
 #[unstable(feature = "decode_utf8", issue = "33906")]

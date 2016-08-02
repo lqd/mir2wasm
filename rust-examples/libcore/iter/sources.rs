@@ -10,7 +10,7 @@
 
 use clone::Clone;
 use default::Default;
-use fmt;
+// use fmt;
 use marker;
 use option::Option::{self, Some, None};
 use usize;
@@ -22,7 +22,7 @@ use super::{DoubleEndedIterator, IntoIterator, Iterator, ExactSizeIterator};
 /// This `struct` is created by the [`repeat()`] function. See its documentation for more.
 ///
 /// [`repeat()`]: fn.repeat.html
-#[derive(Clone, Debug)]
+#[derive(Clone, /*, Debug*/)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Repeat<A> {
     element: A
@@ -104,12 +104,12 @@ pub fn repeat<T: Clone>(elt: T) -> Repeat<T> {
 #[stable(feature = "iter_empty", since = "1.2.0")]
 pub struct Empty<T>(marker::PhantomData<T>);
 
-#[stable(feature = "core_impl_debug", since = "1.9.0")]
-impl<T> fmt::Debug for Empty<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.pad("Empty")
-    }
-}
+// #[stable(feature = "core_impl_debug", since = "1.9.0")]
+// impl<T> fmt::Debug for Empty<T> {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         f.pad("Empty")
+//     }
+// }
 
 #[stable(feature = "iter_empty", since = "1.2.0")]
 impl<T> Iterator for Empty<T> {
@@ -180,7 +180,7 @@ pub fn empty<T>() -> Empty<T> {
 /// This `struct` is created by the [`once()`] function. See its documentation for more.
 ///
 /// [`once()`]: fn.once.html
-#[derive(Clone, Debug)]
+#[derive(Clone, /*, Debug*/)]
 #[stable(feature = "iter_once", since = "1.2.0")]
 pub struct Once<T> {
     inner: ::option::IntoIter<T>

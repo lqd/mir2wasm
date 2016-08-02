@@ -59,7 +59,7 @@
 
 #![no_core]
 // #![deny(missing_docs)]
-#![deny(missing_debug_implementations)]
+// #![deny(missing_debug_implementations)]
 #![cfg_attr(not(stage0), allow(warnings))]
 
 #![cfg_attr(stage0, allow(unused_attributes))]
@@ -91,13 +91,13 @@
 #[macro_use]
 mod macros;
 
-#[path = "num/float_macros.rs"]
-#[macro_use]
-mod float_macros;
+// #[path = "num/float_macros.rs"]
+// #[macro_use]
+// mod float_macros;
 
-#[path = "num/int_macros.rs"]
-#[macro_use]
-mod int_macros;
+// #[path = "num/int_macros.rs"]
+// #[macro_use]
+// mod int_macros;
 
 #[path = "num/uint_macros.rs"]
 #[macro_use]
@@ -108,59 +108,59 @@ mod uint_macros;
 // #[path = "num/i16.rs"]   pub mod i16;
 // #[path = "num/i32.rs"]   pub mod i32;
 // #[path = "num/i64.rs"]   pub mod i64;
-//
-// #[path = "num/usize.rs"] pub mod usize;
+
+#[path = "num/usize.rs"] pub mod usize;
 // #[path = "num/u8.rs"]    pub mod u8;
 // #[path = "num/u16.rs"]   pub mod u16;
 // #[path = "num/u32.rs"]   pub mod u32;
 // #[path = "num/u64.rs"]   pub mod u64;
-//
+
 // #[path = "num/f32.rs"]   pub mod f32;
 // #[path = "num/f64.rs"]   pub mod f64;
 
-// #[macro_use]
-// pub mod num; // stack overflow (si on commente pas une partie)
+#[macro_use]
+pub mod num; // stack overflow (si on commente pas une partie), sinon ICE sur Option.unwrap_or_else
 
-/* The libcore prelude, not as all-encompassing as the libstd prelude */
+// /* The libcore prelude, not as all-encompassing as the libstd prelude */
 
-pub mod prelude;
-//
+// pub mod prelude;
+
 // /* Core modules for ownership management */
-//
+
 pub mod intrinsics;
 pub mod mem;
 pub mod nonzero;
 pub mod ptr;
-//
+
 // /* Core language traits */
-//
+
 pub mod marker;
 pub mod ops;
 pub mod cmp;
 pub mod clone;
 pub mod default;
-pub mod convert; // necessite un stub de result
-pub mod borrow;
-//
+pub mod convert;
+// pub mod borrow;
+
 // /* Core types and methods on primitives */
-//
-// pub mod any; // ICE - monomorphizations
+
+// pub mod any; // ICE
 // pub mod array; // stack overflow
-// pub mod sync; // sync/atomic necessite un stub de result, et necessite cell
-// pub mod cell; // ICE - monomorphizations
+// pub mod sync;
+// pub mod cell; // ICE
 // pub mod char; // stack overflow
 pub mod panicking;
-// pub mod iter; // stack overflow
+pub mod iter;
 pub mod option;
 pub mod raw;
-pub mod result; // necessite un stub d'iter
-//
-// pub mod slice; // necessite un stub d'iter et de result, et necessite iter_private
+pub mod result;
+
+// pub mod slice;
 // pub mod str; // stack overflow
-// pub mod hash; // necessite un stub d'iter, slice, et des operations math wrapping_sub, etc
-// pub mod fmt; // stak overflow
-//
+// pub mod hash;
+// // pub mod fmt; // stack overflow, a l'air de necessiter les traits avec vtable
+
 // // note: does not need to be public
-// mod char_private; // necessite cmp sur plus de types, slice et stub d'iter
-// mod iter_private; // necessite un stub d'iter
-// mod tuple; // necessite un stub d'iter
+// mod char_private;
+mod iter_private;
+// mod tuple;

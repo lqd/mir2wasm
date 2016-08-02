@@ -70,7 +70,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
             BinaryenModuleOptimize(v.module);
         }
 
-        assert!(BinaryenModuleValidate(v.module) == 1, "Internal compiler error: invalid generated module");
+        // assert!(BinaryenModuleValidate(v.module) == 1, "Internal compiler error: invalid generated module");
 
         if options.trace {
             BinaryenSetAPITracing(false);
@@ -124,6 +124,7 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
 
         let mir = &self.mir_map.map[&id];
         let sig = type_scheme.ty.fn_sig().skip_binder();
+        let substs = Substs::empty();
 
         {
             let mut ctxt = BinaryenFnCtxt {
@@ -132,6 +133,7 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
                 mir: mir,
                 did: did,
                 sig: &sig,
+                substs: &substs,
                 module: self.module,
                 entry_fn: self.entry_fn,
                 fun_types: &mut self.fun_types,
@@ -152,11 +154,12 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
     mir: &'v Mir<'tcx>,
     did: DefId,
     sig: &'v FnSig<'tcx>,
+    substs: &'v Substs<'tcx>,
     module: BinaryenModuleRef,
     entry_fn: Option<NodeId>,
     fun_types: &'v mut HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     fun_names: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), CString>,
-    c_strings: &'v mut Vec<CString>,
+    c_strings: &'v mut Vec<CString>,    
 }
 
 impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
@@ -606,7 +609,16 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         let dest = self.trans_lval(lvalue);
         let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
 
+        // debug!("trans_assignment '{:?} = {:?}' - SUBSTS: {:?}", lvalue, rvalue, self.substs);
         let dest_layout = self.type_layout(dest_ty);
+
+        // // TODO(solson): Is this inefficient? Needs investigation.
+        // let ty = monomorphize::apply_ty_substs(self.tcx, self.substs, dest_ty);
+
+        // let dest_layout = self.tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+        //     // TODO(solson): Report this error properly.
+        //     ty.layout(&infcx).unwrap()
+        // });
 
         match *rvalue {
             Rvalue::Use(ref operand) => {
@@ -790,6 +802,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 _ => panic!("unimplemented Tuple Assign '{:?} = {:?}'", lvalue, rvalue)
                             }
                         }
+                    }
+
+                    AggregateKind::Closure(_, _) => {
+                        debug!("ignoring Assign Aggregate Closure '{:?} = {:?}'", lvalue, rvalue);
+                        unsafe { statements.push(BinaryenUnreachable(self.module)) }
                     }
 
                     _ => panic!("unimplemented Assign Aggregate {:?}", kind)
@@ -1076,13 +1093,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             if fn_name.starts_with("intrinsics::::") {
                                 fn_sig = sig.clone();
                                 let name = fn_name[14..].to_string();
-                                debug!("tmp - faking the existance of the intrinsic: '{}'", name);
+                                debug!("tmp - faking the existence of the intrinsic: '{}'", name);
                                 let name = CString::new(name).expect("");
                                 self.fun_names.insert((fn_did, sig.clone()), name);
                             } else if fn_name.starts_with("panicking::panic_fmt::::") {
                                 fn_sig = sig.clone();
                                 let name = fn_name[24..].to_string();
-                                debug!("tmp - faking the existance of the intrinsic: '{}'", name);
+                                debug!("tmp - faking the existence of the intrinsic: '{}'", name);
                                 let name = CString::new(name).expect("");
                                 self.fun_names.insert((fn_did, sig.clone()), name);
                             } else {
@@ -1141,9 +1158,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                                 fun_types: &mut self.fun_types,
                                                 fun_names: &mut self.fun_names,
                                                 c_strings: &mut self.c_strings,
+                                                substs: &substs,
                                             };
 
-                                            debug!("translating monomorphized fn {:?}", self.tcx.item_path_str(fn_did));
+                                            debug!("translating monomorphized fn {:?} - SUBSTS: {:?}", self.tcx.item_path_str(fn_did), ctxt.substs);
                                             ctxt.trans();
                                             debug!("done translating monomorphized {:?}, continuing translation of fn {:?}",
                                                 self.tcx.item_path_str(fn_did), self.tcx.item_path_str(self.did));

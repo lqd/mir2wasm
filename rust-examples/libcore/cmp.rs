@@ -597,13 +597,13 @@ mod impls {
         fn ne(&self, _other: &()) -> bool { false }
     }
 
-    // partial_eq_impl! {
-    //     bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64 f32 f64
-    // }
-
     partial_eq_impl! {
-        bool i32 u8 isize u64 usize // char u16 u32 i8 i16 i64 f32 f64
+        bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64 f32 f64
     }
+
+    // partial_eq_impl! {
+    //     bool i32 u8 isize u64 usize u32 u16 // char i8 i16 i64 f32 f64
+    // }
 
     macro_rules! eq_impl {
         ($($t:ty)*) => ($(
@@ -612,10 +612,10 @@ mod impls {
         )*)
     }
 
-    // eq_impl! { () bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64 }
-    eq_impl! {
-        () bool i32 u8 isize u64 usize // char u16 u32 i8 i16 i64
-    }
+    eq_impl! { () bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64 }
+    // eq_impl! {
+    //     () bool i32 u8 isize u64 usize u32 u16 // char i8 i16 i64
+    // }
 
     macro_rules! partial_ord_impl {
         ($($t:ty)*) => ($(
@@ -658,7 +658,7 @@ mod impls {
         }
     }
 
-    // partial_ord_impl! { f32 f64 }
+    partial_ord_impl! { f32 f64 }
 
     macro_rules! ord_impl {
         ($($t:ty)*) => ($(
@@ -704,10 +704,10 @@ mod impls {
         }
     }
 
-    // ord_impl! { char usize u8 u16 u32 u64 isize i8 i16 i32 i64 }
-    ord_impl! {
-        i32 u8 isize usize // char u16 u32 u64 i8 i16 i64
-    }
+    ord_impl! { char usize u8 u16 u32 u64 isize i8 i16 i32 i64 }
+    // ord_impl! {
+    //     i32 u8 isize usize u32 u16 // char u64 i8 i16 i64
+    // }
 
     // & pointers
 
