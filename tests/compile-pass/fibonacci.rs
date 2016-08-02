@@ -41,14 +41,39 @@ impl Fibonacci for i32 {
     }
 }
 
+#[lang = "panic"] fn panic() -> ! { loop {} }
+
+macro_rules! panic {
+    () => (
+        panic!("explicit panic")
+    );
+    ($msg:expr) => ({
+        $crate::panic()
+    });
+}
+
+macro_rules! assert {
+    ($cond:expr) => (
+        if !$cond {
+            panic!(concat!("assertion failed: ", stringify!($cond)))
+        }
+    );
+}
+
 fn main() {
     let result = fibonacci_recursive(10);
+    assert!(result == 55);
+
     let result = fibonacci_iterative(25);
+    assert!(result == 75025);
+
     let result = fibonacci_recursive(25);
+    assert!(result == 75025);
 
     // trait example
     let nth = 20;
     let result = nth.fibonacci();
+    assert!(result == 6765);
 }
 
 #[lang = "sized"]

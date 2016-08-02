@@ -11,7 +11,7 @@ use rustc::hir::intravisit::{self, Visitor, FnKind};
 use rustc::hir::{FnDecl, Block};
 use rustc::hir::def_id::DefId;
 use rustc::traits::ProjectionMode;
-use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
+use syntax::ast::{NodeId, IntTy, UintTy, FloatTy, MetaItemKind, LitKind};
 use syntax::codemap::Span;
 use std::ffi::CString;
 use std::ptr;
@@ -506,7 +506,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                                   BinaryenExpressionRef(ptr::null_mut()));
                             }
                         }
-                        _ => panic!()
+                        _ => ()
                     }
                 }
                 _ => panic!("unimplemented terminator {:?}", bb.terminator().kind)
@@ -527,30 +527,59 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 self.fun_types.insert(self.sig.clone(), ty);
             }
 
-            // Create the function prologue
-            // TODO: the epilogue and prologue are not always necessary
-            debug!("emitting function prologue, SetLocal({}) + Load", stack_pointer_local.0);
-            let copy_sp = BinaryenSetLocal(self.module, stack_pointer_local, self.emit_read_sp());
-            let prologue = RelooperAddBlock(relooper, copy_sp);
+            let nid = self.tcx.map.as_local_node_id(self.did).expect("");
 
-            if relooper_blocks.len() > 0 {
-                RelooperAddBranch(prologue, relooper_blocks[0],
-                                  BinaryenExpressionRef(ptr::null_mut()),
-                                  BinaryenExpressionRef(ptr::null_mut()));
+            // If the function is diverging, handle the panic lang item
+            // TODO: when it's possible to print characters or interact with the environment, also
+            //       handle #[lang = "panic_fmt"] to support panic messages
+            let mut is_fn_panic = false;
+            if self.sig.output == ty::FnOutput::FnDiverging {
+                let attrs = self.tcx.map.attrs(nid);
+                for attr in attrs {
+                    if let MetaItemKind::NameValue(ref node, ref span) = attr.node.value.node {
+                        if node == "lang" {
+                            if let LitKind::Str(ref value, _) = span.node {
+                                if value == "panic" {
+                                    is_fn_panic = true;
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
-            let body = RelooperRenderAndDispose(relooper,
-                                                prologue,
-                                                relooper_local,
-                                                self.module);
+            if !is_fn_panic {
+                // Create the function prologue
+                // TODO: the epilogue and prologue are not always necessary
+                debug!("emitting function prologue, SetLocal({}) + Load", stack_pointer_local.0);
+                let copy_sp = BinaryenSetLocal(self.module, stack_pointer_local, self.emit_read_sp());
+                let prologue = RelooperAddBlock(relooper, copy_sp);
 
-            BinaryenAddFunction(self.module, fn_name_ptr,
-                                *self.fun_types.get(self.sig).unwrap(),
-                                vars.as_ptr(),
-                                BinaryenIndex(vars.len() as _),
-                                body);
+                if relooper_blocks.len() > 0 {
+                    RelooperAddBranch(prologue, relooper_blocks[0],
+                                      BinaryenExpressionRef(ptr::null_mut()),
+                                      BinaryenExpressionRef(ptr::null_mut()));
+                }
 
-            let nid = self.tcx.map.as_local_node_id(self.did).expect("");
+                let body = RelooperRenderAndDispose(relooper,
+                                                    prologue,
+                                                    relooper_local,
+                                                    self.module);
+
+                BinaryenAddFunction(self.module, fn_name_ptr,
+                                    *self.fun_types.get(self.sig).unwrap(),
+                                    vars.as_ptr(),
+                                    BinaryenIndex(vars.len() as _),
+                                    body);
+            } else {
+                debug!("emitting Unreachable function for panic lang item");
+                BinaryenAddFunction(self.module, fn_name_ptr,
+                                    *self.fun_types.get(self.sig).unwrap(),
+                                    vars.as_ptr(),
+                                    BinaryenIndex(vars.len() as _),
+                                    BinaryenUnreachable(self.module));
+            }
+
             let is_entry_fn = match self.entry_fn {
                 Some(node_id) => node_id == nid,
                 None => false,
@@ -590,6 +619,19 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             BinaryenSetLocal(self.module, dest.index, src)
                         }
                     };
+                    statements.push(statement);
+                }
+            }
+
+            Rvalue::UnaryOp(ref op, ref operand) => {
+                let operand = self.trans_operand(operand);
+                unsafe {
+                    let op = match *op {
+                        UnOp::Not => BinaryenEqZInt32(),
+                        _ => panic!("unimplemented UnOp: {:?}", op)
+                    };
+                    let op = BinaryenUnary(self.module, op, operand);
+                    let statement = BinaryenSetLocal(self.module, dest.index, op);
                     statements.push(statement);
                 }
             }
@@ -1057,7 +1099,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                         BinaryenNone()
                                     }
                                 }
-                                _ => panic!()
+                                _ => BinaryenNone()
                             };
 
                             Some((self.fun_names[&(fn_did, fn_sig)].as_ptr(), ret_ty, call_kind))
