@@ -20,26 +20,7 @@ pub mod clone {
     }
 }
 
-pub mod ops {
-    /// A version of the call operator that takes a by-value receiver.
-    #[lang = "fn_once"]
-    #[fundamental] // so that regex can rely that `&str: !FnMut`
-    pub trait FnOnce<Args> {
-        /// The returned type after the call operator is used.
-        type Output;
-
-        /// This is called when the call operator is used.
-        extern "rust-call" fn call_once(self, args: Args) -> Self::Output;
-    }
-
-    #[lang = "drop"]
-    pub trait Drop {
-        fn drop(&mut self);
-    }
-}
-
 use self::Option::*;
-use ops::*;
 
 #[derive(Clone, Copy)]
 enum Option<T> {
@@ -70,6 +51,9 @@ impl<T> Option<T> {
 }
 
 fn main() {
-    let o = Some(5);
-    let i = o.unwrap();
+    let a : Option<i32> = Some(5i32);
+    let b : Option<i64> = Some(5i64);
+
+    a.unwrap();
+    b.unwrap();
 }
