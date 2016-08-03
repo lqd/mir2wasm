@@ -97,7 +97,7 @@ struct BinaryenModuleCtxt<'v, 'tcx: 'v> {
     module: BinaryenModuleRef,
     entry_fn: Option<NodeId>,
     fun_types: HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
-    fun_names: HashMap<(DefId, ty::FnSig<'tcx>), CString>,
+    fun_names: HashMap<(DefId, Substs<'tcx>), CString>,
     c_strings: Vec<CString>,
 }
 
@@ -158,7 +158,7 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
     module: BinaryenModuleRef,
     entry_fn: Option<NodeId>,
     fun_types: &'v mut HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
-    fun_names: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), CString>,
+    fun_names: &'v mut HashMap<(DefId, Substs<'tcx>), CString>,
     c_strings: &'v mut Vec<CString>,
 }
 
@@ -169,13 +169,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         // Maintain a cache of translated monomorphizations and bail
         // if we've already seen this one.
         let fn_name_ptr;
-        if self.fun_names.contains_key(&(self.did, self.sig.clone())) {
+        if self.fun_names.contains_key(&(self.did, self.substs.clone())) {
             return;
         } else {
-            let fn_name = sanitize_symbol(&self.tcx.item_path_str(self.did));
+            let fn_name = binaryen_name(self.did, self.substs);
             let fn_name = CString::new(fn_name).expect("");
             fn_name_ptr = fn_name.as_ptr();
-            self.fun_names.insert((self.did, self.sig.clone()), fn_name);
+            self.fun_names.insert((self.did, self.substs.clone()), fn_name);
         }
 
         debug!("translating fn {:?}", self.tcx.item_path_str(self.did));
@@ -1100,20 +1100,20 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 let name = fn_name[14..].to_string();
                                 debug!("tmp - faking the existence of the intrinsic: '{}'", name);
                                 let name = CString::new(name).expect("");
-                                self.fun_names.insert((fn_did, sig.clone()), name);
+                                self.fun_names.insert((fn_did, (*substs).clone()), name);
                             } else if fn_name.starts_with("panicking::panic_fmt::::") {
                                 fn_sig = sig.clone();
                                 let name = fn_name[24..].to_string();
                                 debug!("tmp - faking the existence of the intrinsic: '{}'", name);
                                 let name = CString::new(name).expect("");
-                                self.fun_names.insert((fn_did, sig.clone()), name);
+                                self.fun_names.insert((fn_did, (*substs).clone()), name);
                             } else {
                                 match fn_name.as_ref() {
                                     "wasm::::print_i32" | "wasm::::_print_i32" => {
                                         // extern wasm functions
                                         fn_sig = sig.clone();
                                         call_kind = BinaryenCallKind::Import;
-                                        self.import_wasm_extern(fn_did, sig);
+                                        self.import_wasm_extern(fn_did, substs);
                                     }
                                     _ => {
                                         let is_trait_method = substs.self_ty().is_some();
@@ -1131,6 +1131,16 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                             let sig = ty.fn_sig().skip_binder();
 
                                             fn_did = resolved_def_id;
+
+                                            // mark the fn defid seen to not have translated twice
+                                            // TODO: verify this more thoroughly, works for our limited tests right now
+                                            /*if *sig != fn_sig*/ {
+                                                let fn_name = binaryen_name(fn_did, substs);
+                                                let fn_name = CString::new(fn_name).expect("");
+                                                debug!("MARKING {:?} as seen", fn_name);
+                                                self.fun_names.insert((fn_did, (*substs).clone()), fn_name);
+                                            }
+
                                             (nid, resolved_substs, sig)
                                         };
 
@@ -1144,16 +1154,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                                         fn_sig = monomorphize::apply_param_substs(self.tcx, substs, sig);
 
-                                        // mark the fn defid seen to not have translated twice
-                                        // TODO: verify this more thoroughly, works for our limited tests right now
-                                        if *sig != fn_sig {
-                                            let fn_name = sanitize_symbol(&self.tcx.item_path_str(fn_did));
-                                            let fn_name = CString::new(fn_name).expect("");
-                                            self.fun_names.insert((fn_did, sig.clone()), fn_name);
-                                        }
-
                                         // This simple check is also done in trans() but doing it here helps have a clearer debug log
-                                        if !self.fun_names.contains_key(&(fn_did, fn_sig.clone())) {
+                                        if !self.fun_names.contains_key(&(fn_did, substs.clone())) {
                                             let mut ctxt = BinaryenFnCtxt {
                                                 tcx: self.tcx,
                                                 mir_map: self.mir_map,
@@ -1188,7 +1190,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 _ => BinaryenNone()
                             };
 
-                            Some((self.fun_names[&(fn_did, fn_sig)].as_ptr(), ret_ty, call_kind))
+                            if !self.fun_names.contains_key(&(fn_did, (*substs).clone())) {
+                                panic!("NOPE: {:?} {}, entries: {:?}", fn_did, self.tcx.item_path_str(fn_did), self.fun_names);
+                            }
+
+                            Some((self.fun_names[&(fn_did, (*substs).clone())].as_ptr(), ret_ty, call_kind))
                         } else {
                             panic!("unimplemented ty {:?} for {:?}", ty, def_id);
                         }
@@ -1207,7 +1213,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         let runtime_start_name_ptr = runtime_start_name.as_ptr();
         self.c_strings.push(runtime_start_name);
 
-        let entry_fn_name = &self.fun_names[&(self.did, self.sig.clone())];
+        let entry_fn_name = &self.fun_names[&(self.did, self.substs.clone())];
 
         unsafe {
             let runtime_start_ty = BinaryenAddFunctionType(self.module,
@@ -1267,15 +1273,15 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         }
     }
 
-    fn import_wasm_extern(&mut self, did: DefId, sig: &ty::FnSig<'tcx>) {
-        if self.fun_names.contains_key(&(did, sig.clone())) {
+    fn import_wasm_extern(&mut self, did: DefId, substs: &Substs<'tcx>) {
+        if self.fun_names.contains_key(&(did, substs.clone())) {
             return;
         }
 
         // import print i32
         let print_i32_name = CString::new("print_i32").expect("");
         let print_i32 = print_i32_name.as_ptr();
-        self.fun_names.insert((did, sig.clone()), print_i32_name.clone());
+        self.fun_names.insert((did, substs.clone()), print_i32_name.clone());
         self.c_strings.push(print_i32_name);
 
         let spectest_module_name = CString::new("spectest").expect("");
@@ -1320,10 +1326,15 @@ fn rust_ty_to_binaryen<'tcx>(t: Ty<'tcx>) -> BinaryenType {
     }
 }
 
+fn binaryen_name<'tcx>(def_id: DefId, substs: &'tcx Substs<'tcx>) -> String {
+    let name = format!("{:?}", Literal::Item { def_id: def_id, substs: substs });
+    sanitize_symbol(&name)
+}
+
 fn sanitize_symbol(s: &str) -> String {
     s.chars().map(|c| {
         match c {
-            '<' | '>' | ' ' | '(' | ')' => '_',
+            /*'<' | '>' |*/ ' ' | '(' | ')' => '_',
             _ => c
         }
     }).collect()
