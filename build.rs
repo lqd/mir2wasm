@@ -13,8 +13,8 @@ const WASM_BUILD: &'static str = "9901";
 fn main() {
     let cmake = thread::spawn(|| {
         if !Path::new("binaryen/.git").exists() {
-            let _ = Command::new("git").args(&["submodule", "update", "--init"])
-                .status();
+            Command::new("git").args(&["submodule", "update", "--init"])
+                .status().expect("error updating submodules");
         }
         cmake::Config::new("binaryen")
             .define("BUILD_STATIC_LIB", "ON")
@@ -73,7 +73,7 @@ fn update_wasm_toolchain() {
     let url = url.as_str();
     Command::new("wget").args(&[url, "-O", TMP_FILE]).status()
         .and_then(|_| {
-            Command::new("tar").args(&["xjvf", TMP_FILE]).status()
+            Command::new("tar").args(&["xjf", TMP_FILE]).status()
         })
         .and_then(|_| {
             File::create(WASM_INSTALL_VER)
@@ -81,5 +81,5 @@ fn update_wasm_toolchain() {
         .and_then(|mut file| {
             writeln!(file, "{}", WASM_BUILD)
         })
-        .unwrap();
+        .expect("error downloading wasm toolchain");
 }
