@@ -66,6 +66,12 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         unsafe { BinaryenSetAPITracing(true) }
     }
 
+    let mem_size = BinaryenIndex(256);
+    unsafe {
+        BinaryenSetMemory(v.module, mem_size, mem_size, CString::new("memory").unwrap().as_ptr(),
+                          ptr::null(), ptr::null(), ptr::null(), BinaryenIndex(0));
+    }
+
     tcx.map.krate().visit_all_items(v);
 
     v.write_to_file("test.wasm").expect("error writing wasm file");
@@ -77,7 +83,8 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
             BinaryenModuleOptimize(v.module);
         }
 
-        assert!(BinaryenModuleValidate(v.module) == 1, "Internal compiler error: invalid generated module");
+        assert!(BinaryenModuleValidate(v.module) == 1,
+                "Internal compiler error: invalid generated module");
 
         if options.trace {
             BinaryenSetAPITracing(false);
@@ -603,6 +610,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     vars.as_ptr(),
                                     BinaryenIndex(vars.len() as _),
                                     body);
+
+                // TODO: don't unconditionally export this
+                BinaryenAddExport(self.module, fn_name_ptr, fn_name_ptr);
             } else {
                 debug!("emitting Unreachable function for panic lang item");
                 BinaryenAddFunction(self.module, fn_name_ptr,
