@@ -1,4 +1,4 @@
-let buffer = readbuffer('test.wasm');
+let buffer = readbuffer('fact.wasm');
 
 let empty_function = function() {}
 let module_handler = {

@@ -26,12 +26,13 @@ use binaryen::*;
 use monomorphize;
 use traits;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct WasmTransOptions {
     pub optimize: bool,
     pub interpret: bool,
     pub print: bool,
     trace: bool,
+    pub binary_output_path: Option<String>,
 }
 
 impl WasmTransOptions {
@@ -41,6 +42,7 @@ impl WasmTransOptions {
             interpret: false,
             print: true,
             trace: false,
+            binary_output_path: None,
         }
     }
 }
@@ -66,6 +68,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         unsafe { BinaryenSetAPITracing(true) }
     }
 
+    // TODO: allow for a configurable (or auto-detected) memory size
     let mem_size = BinaryenIndex(256);
     unsafe {
         BinaryenSetMemory(v.module, mem_size, mem_size, CString::new("memory").unwrap().as_ptr(),
@@ -73,8 +76,6 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
     }
 
     tcx.map.krate().visit_all_items(v);
-
-    v.write_to_file("test.wasm").expect("error writing wasm file");
 
     unsafe {
         // TODO: check which of the Binaryen optimization passes we want aren't on by default here.
@@ -97,9 +98,10 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         if options.interpret {
             BinaryenModuleInterpret(v.module);
         }
+    }
 
-        // TODO: add CLI option to save the module to a specified file: -o ?
-        // BinaryenModuleWrite(v.module, ...)
+    for output in &options.binary_output_path {
+        v.write_to_file(output).expect("error writing wasm file");
     }
 
     Ok(())
