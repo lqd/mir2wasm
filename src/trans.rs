@@ -121,7 +121,7 @@ impl<'v, 'tcx: 'v> BinaryenModuleCtxt<'v, 'tcx> {
     fn serialize(&self) -> Vec<u8> {
         unsafe {
             // TODO: find a way to determine the size of the buffer
-            // first. Right now we just make a giant 4MB buffer and
+            // first. Right now we just make a 4MB buffer and
             // truncate.
             let mut buffer = Vec::with_capacity(1 << 22);
             let size = BinaryenModuleWrite(self.module, mem::transmute(buffer.as_mut_ptr()),
