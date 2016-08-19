@@ -273,7 +273,7 @@ extern {
 
     pub fn BinaryenModuleWrite(module: BinaryenModuleRef, output: *const c_char, outputSize: size_t) -> size_t;
 
-    pub fn BinaryenModuleRead(input: *const c_char, inputSize: size_t) -> BinaryenModuleRef;
+    pub fn BinaryenModuleRead(input: *mut c_char, inputSize: size_t) -> BinaryenModuleRef;
 
     pub fn BinaryenModuleInterpret(module: BinaryenModuleRef);
 

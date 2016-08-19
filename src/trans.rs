@@ -14,6 +14,11 @@ use rustc::traits::ProjectionMode;
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy, MetaItemKind, LitKind};
 use syntax::codemap::Span;
 use std::ffi::CString;
+use std::fs::File;
+use std::io;
+use std::io::Write;
+use std::mem;
+use std::path::Path;
 use std::ptr;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -63,6 +68,8 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
     tcx.map.krate().visit_all_items(v);
 
+    v.write_to_file("test.wasm").expect("error writing wasm file");
+
     unsafe {
         // TODO: check which of the Binaryen optimization passes we want aren't on by default here.
         //       eg, removing unused functions and imports, minification, etc
@@ -99,6 +106,31 @@ struct BinaryenModuleCtxt<'v, 'tcx: 'v> {
     fun_types: HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     fun_names: HashMap<(DefId, ty::FnSig<'tcx>), CString>,
     c_strings: Vec<CString>,
+}
+
+impl<'v, 'tcx: 'v> BinaryenModuleCtxt<'v, 'tcx> {
+    fn serialize(&self) -> Vec<u8> {
+        unsafe {
+            // TODO: find a way to determine the size of the buffer
+            // first. Right now we just make a giant 4MB buffer and
+            // truncate.
+            let mut buffer = Vec::with_capacity(1 << 22);
+            let size = BinaryenModuleWrite(self.module, mem::transmute(buffer.as_mut_ptr()),
+                                           buffer.capacity());
+
+            buffer.set_len(size);
+            buffer.shrink_to_fit();
+
+            buffer
+        }
+    }
+
+    fn write_to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let mut file = try!(File::create(path));
+        let buffer = self.serialize();
+
+        file.write_all(buffer.as_slice())
+    }
 }
 
 impl<'v, 'tcx: 'v> Drop for BinaryenModuleCtxt<'v, 'tcx> {
