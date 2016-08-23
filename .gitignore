@@ -4,3 +4,6 @@ tex/*/out
 *.dot
 *.mir
 *~
+/wasm-install
+/.wasm-install-ver
+/.wasm-install.tbz2

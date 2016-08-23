@@ -12,7 +12,7 @@ extern crate rustc_driver;
 #[link_args = "-lstdc++ -static-libstdc++"]
 extern { }
 
-use getopts::{optflag, getopts};
+use getopts::{getopts, optflag, optopt};
 use mir2wasm::trans::{self, WasmTransOptions};
 use rustc::session::Session;
 use rustc_driver::{driver, CompilerCalls};
@@ -37,7 +37,8 @@ impl<'a> CompilerCalls<'a> for WasmCompilerCalls {
         _: &getopts::Matches
     ) -> driver::CompileController<'a> {
         let mut control = driver::CompileController::basic();
-        let options = self.options;
+
+        let options = self.options.clone();
 
         control.after_analysis.stop = rustc_driver::Compilation::Stop;
         control.after_analysis.callback = Box::new(move |state| {
@@ -46,7 +47,7 @@ impl<'a> CompilerCalls<'a> for WasmCompilerCalls {
             let entry_fn = state.session.entry_fn.borrow();
             let entry_fn = if let Some((node_id, _)) = *entry_fn { Some(node_id) } else { None };
             trans::trans_crate(&state.tcx.unwrap(), state.mir_map.unwrap(), entry_fn, &options)
-                .unwrap(); // FIXME
+                .expect("error translating crate");
         });
 
         control
@@ -58,8 +59,9 @@ fn main() {
 
     let opts = &[
         optflag("r", "run", "run the compiled module through the interpreter, without printing it"),
-        optflag("q", "", "do not print the compiled wast module"),
+        optopt("o", "", "write a binary wasm module to FILE", "FILE"),
         optflag("O", "", "optimize the compiled wast module"),
+        optflag("q", "", "do not print the compiled wast module"),
         optflag("h", "help", "display this help message"),
     ];
 
@@ -114,11 +116,15 @@ fn main() {
     let matches = getopts(&wasm_args[..], opts).expect("could not parse command line arguments");
 
     if matches.opt_present("h") {
-        print!("{}", getopts::usage("Usage: mir2wasm [options]", opts));
+        let brief = format!("Usage: {} [options]", args[0]);
+        print!("{}", getopts::usage(brief.as_str(), opts));
         return;
     }
     if matches.opt_present("r") {
         options.interpret = true;
+    }
+    if matches.opt_present("o") {
+        options.binary_output_path = matches.opt_str("o");
     }
     if matches.opt_present("O") {
         options.optimize = true;

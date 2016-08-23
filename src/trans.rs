@@ -14,6 +14,11 @@ use rustc::traits::ProjectionMode;
 use syntax::ast::{NodeId, IntTy, UintTy, FloatTy, MetaItemKind, LitKind};
 use syntax::codemap::Span;
 use std::ffi::CString;
+use std::fs::File;
+use std::io;
+use std::io::Write;
+use std::mem;
+use std::path::Path;
 use std::ptr;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -21,12 +26,13 @@ use binaryen::*;
 use monomorphize;
 use traits;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct WasmTransOptions {
     pub optimize: bool,
     pub interpret: bool,
     pub print: bool,
     trace: bool,
+    pub binary_output_path: Option<String>,
 }
 
 impl WasmTransOptions {
@@ -36,6 +42,7 @@ impl WasmTransOptions {
             interpret: false,
             print: true,
             trace: false,
+            binary_output_path: None,
         }
     }
 }
@@ -61,6 +68,13 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         unsafe { BinaryenSetAPITracing(true) }
     }
 
+    // TODO: allow for a configurable (or auto-detected) memory size
+    let mem_size = BinaryenIndex(256);
+    unsafe {
+        BinaryenSetMemory(v.module, mem_size, mem_size, CString::new("memory").unwrap().as_ptr(),
+                          ptr::null(), ptr::null(), ptr::null(), BinaryenIndex(0));
+    }
+
     tcx.map.krate().visit_all_items(v);
 
     unsafe {
@@ -70,7 +84,8 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
             BinaryenModuleOptimize(v.module);
         }
 
-        assert!(BinaryenModuleValidate(v.module) == 1, "Internal compiler error: invalid generated module");
+        assert!(BinaryenModuleValidate(v.module) == 1,
+                "Internal compiler error: invalid generated module");
 
         if options.trace {
             BinaryenSetAPITracing(false);
@@ -83,9 +98,10 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         if options.interpret {
             BinaryenModuleInterpret(v.module);
         }
+    }
 
-        // TODO: add CLI option to save the module to a specified file: -o ?
-        // BinaryenModuleWrite(v.module, ...)
+    for output in &options.binary_output_path {
+        v.write_to_file(output).expect("error writing wasm file");
     }
 
     Ok(())
@@ -99,6 +115,31 @@ struct BinaryenModuleCtxt<'v, 'tcx: 'v> {
     fun_types: HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     fun_names: HashMap<(DefId, ty::FnSig<'tcx>), CString>,
     c_strings: Vec<CString>,
+}
+
+impl<'v, 'tcx: 'v> BinaryenModuleCtxt<'v, 'tcx> {
+    fn serialize(&self) -> Vec<u8> {
+        unsafe {
+            // TODO: find a way to determine the size of the buffer
+            // first. Right now we just make a 4MB buffer and
+            // truncate.
+            let mut buffer = Vec::with_capacity(1 << 22);
+            let size = BinaryenModuleWrite(self.module, mem::transmute(buffer.as_mut_ptr()),
+                                           buffer.capacity());
+
+            buffer.set_len(size);
+            buffer.shrink_to_fit();
+
+            buffer
+        }
+    }
+
+    fn write_to_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let mut file = try!(File::create(path));
+        let buffer = self.serialize();
+
+        file.write_all(buffer.as_slice())
+    }
 }
 
 impl<'v, 'tcx: 'v> Drop for BinaryenModuleCtxt<'v, 'tcx> {
@@ -571,6 +612,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     vars.as_ptr(),
                                     BinaryenIndex(vars.len() as _),
                                     body);
+
+                // TODO: don't unconditionally export this
+                BinaryenAddExport(self.module, fn_name_ptr, fn_name_ptr);
             } else {
                 debug!("emitting Unreachable function for panic lang item");
                 BinaryenAddFunction(self.module, fn_name_ptr,
