@@ -277,8 +277,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     StatementKind::Assign(ref lvalue, ref rvalue) => {
                         self.trans_assignment(lvalue, rvalue, &mut binaryen_stmts);
                     }
-                    StatementKind::StorageLive(ref var) => {}
-                    StatementKind::StorageDead(ref var) => {}
+                    StatementKind::StorageLive(_) => {}
+                    StatementKind::StorageDead(_) => {}
                     _ => panic!("{:?}", stmt.kind)
                 }
             }
@@ -581,21 +581,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             // If the function is diverging, handle the panic lang item
             // TODO: when it's possible to print characters or interact with the environment, also
             //       handle #[lang = "panic_fmt"] to support panic messages
-            let mut is_fn_panic = false;
-            // if self.sig.output == ty::FnOutput::FnDiverging {
-            //     let attrs = self.tcx.map.attrs(nid);
-            //     for attr in attrs {
-            //         if let MetaItemKind::NameValue(ref node, ref span) = attr.node.value.node {
-            //             if node == "lang" {
-            //                 if let LitKind::Str(ref value, _) = span.node {
-            //                     if value == "panic" {
-            //                         is_fn_panic = true;
-            //                     }
-            //                 }
-            //             }
-            //         }
-            //     }
-            // }
+            let mut is_fn_panic = Some(self.did) == self.tcx.lang_items.panic_fn();
 
             if !is_fn_panic {
                 // Create the function prologue
@@ -743,12 +729,6 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         BinOp::Sub => BinaryenSubInt32(),
                         BinOp::Mul => BinaryenMulInt32(),
                         BinOp::Div => BinaryenDivSInt32(),
-                        BinOp::Eq => BinaryenEqInt32(),
-                        BinOp::Ne => BinaryenNeInt32(),
-                        BinOp::Lt => BinaryenLtSInt32(),
-                        BinOp::Le => BinaryenLeSInt32(),
-                        BinOp::Gt => BinaryenGtSInt32(),
-                        BinOp::Ge => BinaryenGeSInt32(),
                         _ => panic!("unimplemented BinOp: {:?}", op)
                     };
 
@@ -964,18 +944,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
     fn trans_lval(&mut self, lvalue: &Lvalue<'tcx>) -> BinaryenLvalue {
         let i = match *lvalue {
-            Lvalue::Arg(i) => {
-                let i: u32 = unsafe { mem::transmute(i) };
-                i
-            },
+            Lvalue::Arg(i) => i.index() as u32,
             Lvalue::Var(i) => {
-                let i: u32 = unsafe { mem::transmute(i) };
-                self.mir.arg_decls.len() as u32 + i
+                self.mir.arg_decls.len() as u32 + i.index() as u32
             }
             Lvalue::Temp(i) => {
-                let i: u32 = unsafe { mem::transmute(i) };
                 self.mir.arg_decls.len() as u32 +
-                    self.mir.var_decls.len() as u32 + i
+                    self.mir.var_decls.len() as u32 + i.index() as u32
             }
             Lvalue::ReturnPointer => {
                 self.mir.arg_decls.len() as u32 +
