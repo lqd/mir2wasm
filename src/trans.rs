@@ -11,7 +11,7 @@ use rustc::hir::intravisit::{self, Visitor, FnKind};
 use rustc::hir::{FnDecl, Block};
 use rustc::hir::def_id::DefId;
 use rustc::traits::Reveal;
-use syntax::ast::{NodeId, IntTy, UintTy, FloatTy, MetaItemKind, LitKind};
+use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
 use syntax::codemap::Span;
 use std::ffi::CString;
 use std::fs::File;
@@ -1110,18 +1110,16 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 _ => {
                                     let is_trait_method = self.tcx.trait_of_item(fn_did).is_some();
 
-                                    let (nid, substs, sig) = if !is_trait_method {
-                                        let nid = self.tcx.map.as_local_node_id(fn_did).expect("");
-                                        (nid, *substs, sig)
+                                    let (substs, sig) = if !is_trait_method {
+                                        (*substs, sig)
                                     } else {
                                         let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.tcx, fn_did, substs);
-                                        let nid = self.tcx.map.as_local_node_id(resolved_def_id).expect("");
                                         let ty = self.tcx.lookup_item_type(resolved_def_id).ty;
                                         // TODO: investigate rustc trans use of liberate_bound_regions or similar here
                                         let sig = ty.fn_sig().skip_binder();
 
                                         fn_did = resolved_def_id;
-                                        (nid, resolved_substs, sig)
+                                        (resolved_substs, sig)
                                     };
 
                                     let mir = &self.mir_map.map[&fn_did];
