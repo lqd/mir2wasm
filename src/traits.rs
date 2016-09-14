@@ -25,7 +25,7 @@ pub fn resolve_trait_method<'a, 'tcx>(
             let mname = tcx.item_name(def_id);
             // Create a concatenated set of substitutions which includes those from the impl
             // and those from the method:
-            let substs = substs.rebase_onto(*tcx, def_id, vtable_impl.substs);
+            let substs = substs.rebase_onto(*tcx, trait_id, vtable_impl.substs);
             let mth = get_impl_method(*tcx, impl_did, substs, mname);
 
             (mth.method.def_id, mth.substs)
