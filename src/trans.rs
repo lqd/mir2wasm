@@ -179,6 +179,7 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
                 fun_types: &mut self.fun_types,
                 fun_names: &mut self.fun_names,
                 c_strings: &mut self.c_strings,
+                checked_op_local: None,
             };
 
             ctxt.trans();
@@ -199,6 +200,7 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
     fun_types: &'v mut HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     fun_names: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), CString>,
     c_strings: &'v mut Vec<CString>,
+    checked_op_local: Option<BinaryenIndex>,
 }
 
 impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
@@ -254,9 +256,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         vars.push(BinaryenInt32());
         let relooper_local = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
 
+        // checked operation local for the intermediate result of a checked operation (double-width)
+        vars.push(BinaryenInt64());
+        let checked_op_local = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
+        self.checked_op_local = Some(checked_op_local);
+
         let locals_count = binaryen_args.len() + vars.len();
-        debug!("{} wasm locals initially found - params: {}, vars: {} (incl. stack pointer helper ${}, relooper helper ${})",
-            locals_count, binaryen_args.len(), vars.len(), stack_pointer_local.0, relooper_local.0);
+        debug!("{} wasm locals initially found - params: {}, vars: {} (incl. stack pointer helper ${}, relooper helper ${}, checked operation helper ${})",
+            locals_count, binaryen_args.len(), vars.len(), stack_pointer_local.0, relooper_local.0, checked_op_local.0);
 
         // Create the relooper for tying together basic blocks. We're
         // going to first translate the basic blocks without the
@@ -718,29 +725,51 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 unsafe {
                     // TODO: match on dest_ty.sty to implement binary ops for other types than just i32s
                     // TODO: check if the dest_layout is signed or not (CEnum, etc)
-                    // TODO: comparisons are signed only for now, so implement unsigned ones
+                    // TODO: operations are signed only for now, so implement unsigned ones
                     let op = match *op {
-                        BinOp::Add => BinaryenAddInt32(),
-                        BinOp::Sub => BinaryenSubInt32(),
-                        BinOp::Mul => BinaryenMulInt32(),
-                        BinOp::Div => BinaryenDivSInt32(),
+                        BinOp::Add => BinaryenAddInt64(),
+                        BinOp::Sub => BinaryenSubInt64(),
+                        BinOp::Mul => BinaryenMulInt64(),
+                        BinOp::Div => BinaryenDivSInt64(),
                         _ => panic!("unimplemented BinOp: {:?}", op)
                     };
 
-                    let op = BinaryenBinary(self.module, op, left, right);
-                    let statement = match dest.offset {
+                    let op = BinaryenBinary(self.module, op,
+                        BinaryenUnary(self.module, BinaryenExtendSInt32(), left),
+                        BinaryenUnary(self.module, BinaryenExtendSInt32(), right));
+
+                    statements.push(BinaryenSetLocal(self.module, self.checked_op_local.unwrap(), op));
+
+                    let lower = BinaryenUnary(self.module, BinaryenWrapInt64(),
+                        BinaryenGetLocal(self.module, self.checked_op_local.unwrap(), BinaryenInt64()));
+
+                    let thirty_two = BinaryenConst(self.module, BinaryenLiteralInt64(32));
+
+                    let upper = BinaryenUnary(self.module, BinaryenWrapInt64(),
+                        BinaryenBinary(self.module, BinaryenShrUInt64(),
+                            BinaryenGetLocal(self.module, self.checked_op_local.unwrap(), BinaryenInt64()),
+                            thirty_two));
+
+                    match dest.offset {
                         Some(offset) => {
-                            debug!("emitting Store + GetLocal({}) for Assign BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
+                            debug!("emitting Store + GetLocal({}) for Assign Checked BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                             let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
                             // TODO: match on the dest_ty to know how many bytes to write, not just i32s
-                            BinaryenStore(self.module, 4, offset, 0, ptr, op)
+                            statements.push(BinaryenStore(self.module, 4, offset, 0, ptr, lower));
+                            statements.push(BinaryenStore(self.module, 4, offset + 4, 0, ptr, upper));
                         }
                         None => {
-                            debug!("emitting SetLocal({}) for Assign BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
-                            BinaryenSetLocal(self.module, dest.index, op)
+                            let dest_size = self.type_size(dest_ty) as i32 * 8;
+                            // NOTE: use the variant's min_size and alignment for dest_size ?
+                            debug!("allocating tuple in linear memory to SetLocal({}), size: {:?} bytes", dest.index.0, dest_size);
+                            let allocation = self.emit_alloca(dest.index, dest_size);
+                            statements.push(allocation);
+                            let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
+
+                            statements.push(BinaryenStore(self.module, 4, 0, 0, ptr, lower));
+                            statements.push(BinaryenStore(self.module, 4, 4, 0, ptr, upper));
                         }
-                    };
-                    statements.push(statement);
+                    }
                 }
             }
 
@@ -1150,6 +1179,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                             fun_types: &mut self.fun_types,
                                             fun_names: &mut self.fun_names,
                                             c_strings: &mut self.c_strings,
+                                            checked_op_local: None
                                         };
 
                                         debug!("translating monomorphized fn {:?}", self.tcx.item_path_str(fn_did));
