@@ -78,7 +78,7 @@ mod cmp {
         fn eq(&self, other: &Rhs) -> bool;
 
         #[inline]
-        fn ne(&self, other: &Rhs) -> bool { !self.eq(other) }
+        fn ne(&self, other: &Rhs) -> bool;
     }
 
     impl PartialEq for i32 {

@@ -34,6 +34,9 @@ pub mod marker {
 
     #[lang = "copy"]
     pub trait Copy : Clone { }
+
+    #[lang = "phantom_data"]
+    pub struct PhantomData<T:?Sized>;
 }
 
 pub mod clone {
@@ -42,6 +45,8 @@ pub mod clone {
     pub trait Clone : Sized {
         fn clone(&self) -> Self;
     }
+
+    pub struct AssertParamIsClone<T: Clone + ?Sized> { _field: ::marker::PhantomData<T> }
 
     // should this #[derive] requirement exists and have to be translated in our case ?
     pub fn assert_receiver_is_clone<T: Clone + ?Sized>(_: &T) {}

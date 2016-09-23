@@ -10,8 +10,8 @@ use rustc::ty::subst::Substs;
 use rustc::hir::intravisit::{self, Visitor, FnKind};
 use rustc::hir::{FnDecl, Block};
 use rustc::hir::def_id::DefId;
-use rustc::traits::ProjectionMode;
-use syntax::ast::{NodeId, IntTy, UintTy, FloatTy, MetaItemKind, LitKind};
+use rustc::traits::Reveal;
+use syntax::ast::{NodeId, IntTy, UintTy, FloatTy};
 use syntax::codemap::Span;
 use std::ffi::CString;
 use std::fs::File;
@@ -25,6 +25,7 @@ use std::collections::hash_map::Entry;
 use binaryen::*;
 use monomorphize;
 use traits;
+use rustc_data_structures::indexed_vec::Idx;
 
 #[derive(Debug, Clone)]
 pub struct WasmTransOptions {
@@ -163,7 +164,7 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
             return;
         }
 
-        let mir = &self.mir_map.map[&id];
+        let mir = &self.mir_map.map[&did];
         let sig = type_scheme.ty.fn_sig().skip_binder();
 
         {
@@ -178,12 +179,13 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
                 fun_types: &mut self.fun_types,
                 fun_names: &mut self.fun_names,
                 c_strings: &mut self.c_strings,
+                checked_op_local: None,
             };
 
             ctxt.trans();
         }
 
-        intravisit::walk_fn(self, fk, fd, b, s)
+        intravisit::walk_fn(self, fk, fd, b, s, id)
     }
 }
 
@@ -198,6 +200,7 @@ struct BinaryenFnCtxt<'v, 'tcx: 'v> {
     fun_types: &'v mut HashMap<ty::FnSig<'tcx>, BinaryenFunctionTypeRef>,
     fun_names: &'v mut HashMap<(DefId, ty::FnSig<'tcx>), CString>,
     c_strings: &'v mut Vec<CString>,
+    checked_op_local: Option<BinaryenIndex>,
 }
 
 impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
@@ -221,18 +224,12 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         // Translate arg and ret tys to wasm
         let binaryen_args: Vec<_> = self.sig.inputs.iter().map(|t| rust_ty_to_binaryen(t)).collect();
         let mut needs_ret_var = false;
-        let binaryen_ret = match self.sig.output {
-            ty::FnOutput::FnConverging(t) => {
-                if !t.is_nil() {
-                    needs_ret_var = true;
-                    rust_ty_to_binaryen(t)
-                } else {
-                    BinaryenNone()
-                }
-            },
-            ty::FnOutput::FnDiverging => {
-                BinaryenNone()
-            }
+        let t = self.sig.output;
+        let binaryen_ret = if !t.is_nil() {
+            needs_ret_var = true;
+            rust_ty_to_binaryen(t)
+        } else {
+            BinaryenNone()
         };
 
         // Create the wasm vars.
@@ -259,9 +256,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         vars.push(BinaryenInt32());
         let relooper_local = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
 
+        // checked operation local for the intermediate result of a checked operation (double-width)
+        vars.push(BinaryenInt64());
+        let checked_op_local = BinaryenIndex((binaryen_args.len() + vars.len() - 1) as u32);
+        self.checked_op_local = Some(checked_op_local);
+
         let locals_count = binaryen_args.len() + vars.len();
-        debug!("{} wasm locals initially found - params: {}, vars: {} (incl. stack pointer helper ${}, relooper helper ${})",
-            locals_count, binaryen_args.len(), vars.len(), stack_pointer_local.0, relooper_local.0);
+        debug!("{} wasm locals initially found - params: {}, vars: {} (incl. stack pointer helper ${}, relooper helper ${}, checked operation helper ${})",
+            locals_count, binaryen_args.len(), vars.len(), stack_pointer_local.0, relooper_local.0, checked_op_local.0);
 
         // Create the relooper for tying together basic blocks. We're
         // going to first translate the basic blocks without the
@@ -271,9 +273,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
         let mut relooper_blocks = Vec::new();
 
-        debug!("{} MIR basic blocks to translate", self.mir.basic_blocks.len());
+        debug!("{} MIR basic blocks to translate", self.mir.basic_blocks().len());
 
-        for (i, bb) in self.mir.basic_blocks.iter().enumerate() {
+        for (i, bb) in self.mir.basic_blocks().iter().enumerate() {
             debug!("bb{}: {:#?}", i, bb);
 
             let mut binaryen_stmts = Vec::new();
@@ -282,6 +284,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     StatementKind::Assign(ref lvalue, ref rvalue) => {
                         self.trans_assignment(lvalue, rvalue, &mut binaryen_stmts);
                     }
+                    StatementKind::StorageLive(_) => {}
+                    StatementKind::StorageDead(_) => {}
+                    _ => panic!("{:?}", stmt.kind)
                 }
             }
 
@@ -308,7 +313,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 }
                 TerminatorKind::Switch { ref discr, .. } => {
                     let adt = self.trans_lval(discr);
-                    let adt_ty = self.mir.lvalue_ty(*self.tcx, discr).to_ty(*self.tcx);
+                    let adt_ty = discr.ty(self.mir, *self.tcx).to_ty(*self.tcx);
 
                     if adt.offset.is_some() {
                         panic!("unimplemented Switch with offset");
@@ -375,7 +380,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     let unit_type = BinaryenConst(self.module, BinaryenLiteralInt32(-1));
                                     binaryen_stmts.push(BinaryenSetLocal(self.module, dest.index, unit_type));
                                 } else {
-                                    let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
+                                    let dest_ty = lvalue.ty(self.mir, *self.tcx).to_ty(*self.tcx);
                                     let dest_layout = self.type_layout(dest_ty);
 
                                     match *dest_layout {
@@ -467,7 +472,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         }
 
         // Create the relooper edges from the bb terminators
-        for (i, bb) in self.mir.basic_blocks.iter().enumerate() {
+        for (i, bb) in self.mir.basic_blocks().iter().enumerate() {
             match bb.terminator().kind {
                 TerminatorKind::Goto { ref target } => {
                     debug!("emitting Branch for Goto, from bb{} to bb{}", i, target.index());
@@ -534,6 +539,16 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 TerminatorKind::Return => {
                     /* handled during bb creation */
                 }
+                TerminatorKind::Assert { ref target, .. } => {
+                    // TODO: An assert is not a GOTO!!!
+                    // Fix this!
+                    debug!("emitting Branch for Goto, from bb{} to bb{}", i, target.index());
+                    unsafe {
+                        RelooperAddBranch(relooper_blocks[i], relooper_blocks[target.index()],
+                                          BinaryenExpressionRef(ptr::null_mut()),
+                                          BinaryenExpressionRef(ptr::null_mut()));
+                    }
+                }
                 TerminatorKind::Call {
                     ref destination, ref cleanup, ..
                 } => {
@@ -570,26 +585,16 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
             let nid = self.tcx.map.as_local_node_id(self.did).expect("");
 
-            // If the function is diverging, handle the panic lang item
-            // TODO: when it's possible to print characters or interact with the environment, also
-            //       handle #[lang = "panic_fmt"] to support panic messages
-            let mut is_fn_panic = false;
-            if self.sig.output == ty::FnOutput::FnDiverging {
-                let attrs = self.tcx.map.attrs(nid);
-                for attr in attrs {
-                    if let MetaItemKind::NameValue(ref node, ref span) = attr.node.value.node {
-                        if node == "lang" {
-                            if let LitKind::Str(ref value, _) = span.node {
-                                if value == "panic" {
-                                    is_fn_panic = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if !is_fn_panic {
+            if Some(self.did) == self.tcx.lang_items.panic_fn() {
+                // TODO: when it's possible to print characters or interact with the environment,
+                //       also handle #[lang = "panic_fmt"] to support panic messages
+                debug!("emitting Unreachable function for panic lang item");
+                BinaryenAddFunction(self.module, fn_name_ptr,
+                                    *self.fun_types.get(self.sig).unwrap(),
+                                    vars.as_ptr(),
+                                    BinaryenIndex(vars.len() as _),
+                                    BinaryenUnreachable(self.module));
+            } else {
                 // Create the function prologue
                 // TODO: the epilogue and prologue are not always necessary
                 debug!("emitting function prologue, SetLocal({}) + Load", stack_pointer_local.0);
@@ -615,21 +620,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                 // TODO: don't unconditionally export this
                 BinaryenAddExport(self.module, fn_name_ptr, fn_name_ptr);
-            } else {
-                debug!("emitting Unreachable function for panic lang item");
-                BinaryenAddFunction(self.module, fn_name_ptr,
-                                    *self.fun_types.get(self.sig).unwrap(),
-                                    vars.as_ptr(),
-                                    BinaryenIndex(vars.len() as _),
-                                    BinaryenUnreachable(self.module));
             }
 
-            let is_entry_fn = match self.entry_fn {
-                Some(node_id) => node_id == nid,
-                None => false,
-            };
-
-            if is_entry_fn {
+            if self.entry_fn == Some(nid) {
                 let is_start = self.mir.arg_decls.len() == 2;
                 let entry_fn_name = if is_start { "start" } else { "main" };
                 let wasm_start = self.generate_runtime_start(&entry_fn_name);
@@ -643,7 +636,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
     fn trans_assignment(&mut self, lvalue: &Lvalue<'tcx>, rvalue: &Rvalue<'tcx>, statements: &mut Vec<BinaryenExpressionRef>) {
         let dest = self.trans_lval(lvalue);
-        let dest_ty = self.mir.lvalue_ty(*self.tcx, lvalue).to_ty(*self.tcx);
+        let dest_ty = lvalue.ty(self.mir, *self.tcx).to_ty(*self.tcx);
 
         let dest_layout = self.type_layout(dest_ty);
 
@@ -693,6 +686,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                         BinOp::Sub => BinaryenSubInt32(),
                         BinOp::Mul => BinaryenMulInt32(),
                         BinOp::Div => BinaryenDivSInt32(),
+                        BinOp::BitAnd => BinaryenAndInt32(),
+                        BinOp::BitOr => BinaryenOrInt32(),
+                        BinOp::BitXor => BinaryenXorInt32(),
                         BinOp::Eq => BinaryenEqInt32(),
                         BinOp::Ne => BinaryenNeInt32(),
                         BinOp::Lt => BinaryenLtSInt32(),
@@ -719,6 +715,64 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 }
             }
 
+            Rvalue::CheckedBinaryOp(ref op, ref left, ref right) => {
+                // TODO: This shouldn't just be a copy BinaryOp above!
+                // We should do some actual _checking_!
+
+                let left = self.trans_operand(left);
+                let right = self.trans_operand(right);
+
+                unsafe {
+                    // TODO: match on dest_ty.sty to implement binary ops for other types than just i32s
+                    // TODO: check if the dest_layout is signed or not (CEnum, etc)
+                    // TODO: operations are signed only for now, so implement unsigned ones
+                    let op = match *op {
+                        BinOp::Add => BinaryenAddInt64(),
+                        BinOp::Sub => BinaryenSubInt64(),
+                        BinOp::Mul => BinaryenMulInt64(),
+                        BinOp::Div => BinaryenDivSInt64(),
+                        _ => panic!("unimplemented BinOp: {:?}", op)
+                    };
+
+                    let op = BinaryenBinary(self.module, op,
+                        BinaryenUnary(self.module, BinaryenExtendSInt32(), left),
+                        BinaryenUnary(self.module, BinaryenExtendSInt32(), right));
+
+                    statements.push(BinaryenSetLocal(self.module, self.checked_op_local.unwrap(), op));
+
+                    let lower = BinaryenUnary(self.module, BinaryenWrapInt64(),
+                        BinaryenGetLocal(self.module, self.checked_op_local.unwrap(), BinaryenInt64()));
+
+                    let thirty_two = BinaryenConst(self.module, BinaryenLiteralInt64(32));
+
+                    let upper = BinaryenUnary(self.module, BinaryenWrapInt64(),
+                        BinaryenBinary(self.module, BinaryenShrUInt64(),
+                            BinaryenGetLocal(self.module, self.checked_op_local.unwrap(), BinaryenInt64()),
+                            thirty_two));
+
+                    match dest.offset {
+                        Some(offset) => {
+                            debug!("emitting Store + GetLocal({}) for Assign Checked BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
+                            let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
+                            // TODO: match on the dest_ty to know how many bytes to write, not just i32s
+                            statements.push(BinaryenStore(self.module, 4, offset, 0, ptr, lower));
+                            statements.push(BinaryenStore(self.module, 4, offset + 4, 0, ptr, upper));
+                        }
+                        None => {
+                            let dest_size = self.type_size(dest_ty) as i32 * 8;
+                            // NOTE: use the variant's min_size and alignment for dest_size ?
+                            debug!("allocating tuple in linear memory to SetLocal({}), size: {:?} bytes", dest.index.0, dest_size);
+                            let allocation = self.emit_alloca(dest.index, dest_size);
+                            statements.push(allocation);
+                            let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
+
+                            statements.push(BinaryenStore(self.module, 4, 0, 0, ptr, lower));
+                            statements.push(BinaryenStore(self.module, 4, 4, 0, ptr, upper));
+                        }
+                    }
+                }
+            }
+
             Rvalue::Ref( _, _, ref lvalue) => {
                 // TODO: for shared refs only ?
                 // TODO: works for refs to "our stack", but not the locals on the wasm stack yet
@@ -732,7 +786,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
             Rvalue::Aggregate (ref kind, ref operands) => {
                 match *kind {
-                    AggregateKind::Adt(ref adt_def, _, ref substs) => {
+                    AggregateKind::Adt(ref adt_def, _, ref substs, _) => {
                         let dest_layout = self.type_layout_with_substs(dest_ty, substs);
 
                         // TODO: check sizes, alignments (abi vs preferred), etc
@@ -751,7 +805,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             }
 
                             Layout::General { discr, ref variants, .. } => {
-                                if let AggregateKind::Adt(ref adt_def, variant, _) = *kind {
+                                if let AggregateKind::Adt(ref adt_def, variant, _, _) = *kind {
                                     let discr_val = adt_def.variants[variant].disr_val.to_u32().unwrap();
                                     let discr_size = discr.size().bytes() as u32;
 
@@ -777,7 +831,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                             Layout::CEnum { discr, .. } => {
                                 assert_eq!(operands.len(), 0);
-                                if let AggregateKind::Adt(adt_def, variant, _) = *kind {
+                                if let AggregateKind::Adt(adt_def, variant, _, _) = *kind {
                                     let discr_size = discr.size().bytes();
                                     if discr_size > 4 {
                                         panic!("unimplemented >32bit discr size: {}", discr_size);
@@ -836,7 +890,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 match *kind {
                     CastKind::Misc => {
                         let src = self.trans_operand(operand);
-                        let src_ty = self.mir.operand_ty(*self.tcx, operand);
+                        let src_ty = operand.ty(self.mir, *self.tcx);
                         let src_layout = self.type_layout(src_ty);
 
                         // TODO: handle more of the casts (miri doesn't really handle every Misc cast either right now)
@@ -914,11 +968,13 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
     fn trans_lval(&mut self, lvalue: &Lvalue<'tcx>) -> BinaryenLvalue {
         let i = match *lvalue {
-            Lvalue::Arg(i) => i,
-            Lvalue::Var(i) => self.mir.arg_decls.len() as u32 + i,
+            Lvalue::Arg(i) => i.index() as u32,
+            Lvalue::Var(i) => {
+                self.mir.arg_decls.len() as u32 + i.index() as u32
+            }
             Lvalue::Temp(i) => {
                 self.mir.arg_decls.len() as u32 +
-                    self.mir.var_decls.len() as u32 + i
+                    self.mir.var_decls.len() as u32 + i.index() as u32
             }
             Lvalue::ReturnPointer => {
                 self.mir.arg_decls.len() as u32 +
@@ -927,7 +983,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
             }
             Lvalue::Projection(ref projection) => {
                 let base = self.trans_lval(&projection.base);
-                let base_ty = self.mir.lvalue_ty(*self.tcx, &projection.base).to_ty(*self.tcx);
+                let base_ty = projection.base.ty(self.mir, *self.tcx).to_ty(*self.tcx);
                 let base_layout = self.type_layout(base_ty);
 
                 match projection.elem {
@@ -977,7 +1033,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         match *operand {
             Operand::Consume(ref lvalue) => {
                 let binaryen_lvalue = self.trans_lval(lvalue);
-                let lval_ty = self.mir.lvalue_ty(*self.tcx, lvalue);
+                let lval_ty = lvalue.ty(self.mir, *self.tcx);
                 let t = lval_ty.to_ty(*self.tcx);
                 let t = rust_ty_to_binaryen(t);
 
@@ -1034,7 +1090,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
     #[inline]
     fn type_size(&self, ty: Ty<'tcx>) -> usize {
-        let substs = self.tcx.mk_substs(Substs::empty());
+        let substs = Substs::empty(*self.tcx);
         self.type_size_with_substs(ty, substs)
     }
 
@@ -1046,7 +1102,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
     #[inline]
     fn type_layout(&self, ty: Ty<'tcx>) -> &'tcx Layout {
-        let substs = self.tcx.mk_substs(Substs::empty());
+        let substs = Substs::empty(*self.tcx);
         self.type_layout_with_substs(ty, substs)
     }
 
@@ -1055,7 +1111,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         // TODO(solson): Is this inefficient? Needs investigation.
         let ty = monomorphize::apply_ty_substs(self.tcx, substs, ty);
 
-        self.tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+        self.tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| {
             // TODO(solson): Report this error properly.
             ty.layout(&infcx).unwrap()
         })
@@ -1084,23 +1140,21 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     self.import_wasm_extern(fn_did, sig);
                                 }
                                 _ => {
-                                    let is_trait_method = substs.self_ty().is_some();
+                                    let is_trait_method = self.tcx.trait_of_item(fn_did).is_some();
 
-                                    let (nid, substs, sig) = if !is_trait_method {
-                                        let nid = self.tcx.map.as_local_node_id(fn_did).expect("");
-                                        (nid, *substs, sig)
+                                    let (substs, sig) = if !is_trait_method {
+                                        (*substs, sig)
                                     } else {
                                         let (resolved_def_id, resolved_substs) = traits::resolve_trait_method(self.tcx, fn_did, substs);
-                                        let nid = self.tcx.map.as_local_node_id(resolved_def_id).expect("");
                                         let ty = self.tcx.lookup_item_type(resolved_def_id).ty;
                                         // TODO: investigate rustc trans use of liberate_bound_regions or similar here
                                         let sig = ty.fn_sig().skip_binder();
 
                                         fn_did = resolved_def_id;
-                                        (nid, resolved_substs, sig)
+                                        (resolved_substs, sig)
                                     };
 
-                                    let mir = &self.mir_map.map[&nid];
+                                    let mir = &self.mir_map.map[&fn_did];
 
                                     fn_sig = monomorphize::apply_param_substs(self.tcx, substs, sig);
 
@@ -1125,6 +1179,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                             fun_types: &mut self.fun_types,
                                             fun_names: &mut self.fun_names,
                                             c_strings: &mut self.c_strings,
+                                            checked_op_local: None
                                         };
 
                                         debug!("translating monomorphized fn {:?}", self.tcx.item_path_str(fn_did));
@@ -1135,15 +1190,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                 }
                             }
 
-                            let ret_ty = match fn_sig.output {
-                                ty::FnOutput::FnConverging(ref t) => {
-                                    if !t.is_nil() {
-                                        rust_ty_to_binaryen(t)
-                                    } else {
-                                        BinaryenNone()
-                                    }
-                                }
-                                _ => BinaryenNone()
+                            let ret_ty = if !fn_sig.output.is_nil() {
+                                rust_ty_to_binaryen(fn_sig.output)
+                            } else {
+                                BinaryenNone()
                             };
 
                             Some((self.fun_names[&(fn_did, fn_sig)].as_ptr(), ret_ty, call_kind))

@@ -2,7 +2,7 @@ use rustc::ty::{self, TyCtxt};
 use rustc::hir::def_id::DefId;
 
 use std::rc::Rc;
-use rustc::traits::{self, ProjectionMode};
+use rustc::traits::{self, Reveal};
 use rustc::ty::subst::{Substs};
 use rustc::ty::fold::TypeFoldable;
 use syntax::ast::{Name, DUMMY_NODE_ID};
@@ -18,15 +18,14 @@ pub fn resolve_trait_method<'a, 'tcx>(
 ) -> (DefId, &'tcx Substs<'tcx>) {
     let method_item = tcx.impl_or_trait_item(def_id);
     let trait_id = method_item.container().id();
-    let trait_ref = ty::Binder(substs.to_trait_ref(*tcx, trait_id));
+    let trait_ref = ty::Binder(ty::TraitRef::from_method(*tcx, trait_id, substs));
     match fulfill_obligation(tcx, trait_ref) {
         traits::VtableImpl(vtable_impl) => {
             let impl_did = vtable_impl.impl_def_id;
             let mname = tcx.item_name(def_id);
             // Create a concatenated set of substitutions which includes those from the impl
             // and those from the method:
-            let impl_substs = vtable_impl.substs.with_method_from(substs);
-            let substs = tcx.mk_substs(impl_substs);
+            let substs = substs.rebase_onto(*tcx, trait_id, vtable_impl.substs);
             let mth = get_impl_method(*tcx, impl_did, substs, mname);
 
             (mth.method.def_id, mth.substs)
@@ -67,7 +66,7 @@ fn fulfill_obligation<'a, 'tcx>(
 ) -> traits::Vtable<'tcx, ()> {
     // Do the initial selection for the obligation. This yields the shallow result we are
     // looking for -- that is, what specific impl.
-    tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+    tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| {
         let mut selcx = traits::SelectionContext::new(&infcx);
 
         let obligation = traits::Obligation::new(
@@ -122,14 +121,14 @@ fn get_impl_method<'a, 'tcx>(
     substs: &'tcx Substs<'tcx>,
     name: Name,
 ) -> ImplMethod<'tcx> {
-    assert!(!substs.types.needs_infer());
+    assert!(!substs.needs_infer());
 
     let trait_def_id = tcx.trait_id_of_impl(impl_def_id).unwrap();
     let trait_def = tcx.lookup_trait_def(trait_def_id);
 
     match trait_def.ancestors(impl_def_id).fn_defs(tcx, name).next() {
         Some(node_item) => {
-            let substs = tcx.normalizing_infer_ctxt(ProjectionMode::Any).enter(|infcx| {
+            let substs = tcx.infer_ctxt(None, None, Reveal::All).enter(|infcx| {
                 let substs = traits::translate_substs(&infcx, impl_def_id,
                                                       substs, node_item.node);
                 tcx.lift(&substs).unwrap_or_else(|| {
