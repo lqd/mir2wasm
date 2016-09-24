@@ -10,6 +10,15 @@ use std::path::{PathBuf, Path};
 use std::str;
 use std::str::FromStr;
 
+/// Returns the target directory, where we can find build artifacts
+/// and such for the current configuration.
+fn get_target_dir<'a>() -> &'a Path {
+    // OUT_DIR is set by cargo.
+    Path::new(env!("OUT_DIR"))
+        .parent().unwrap()
+        .parent().unwrap()
+        .parent().unwrap()
+}
 
 /// Gets a vector of strings that are expected to be in the output of
 /// this test.
@@ -90,7 +99,7 @@ fn compile_fail() {
         config.mode = "compile-fail".parse().expect("Invalid mode");
         config.run_lib_path =
             Path::new(sysroot).join("lib").join("rustlib").join(&target).join("lib");
-        config.rustc_path = "target/debug/mir2wasm".into();
+        config.rustc_path = get_target_dir().join("mir2wasm");
         config.src_base = PathBuf::from("tests/compile-fail".to_string());
         config.target = target.to_owned();
         config.target_rustcflags = Some(flags.clone());
@@ -134,6 +143,8 @@ impl<'a> TestSuite<'a> {
         let sysroot = find_sysroot();
         let path = &self.path;
 
+        let mir2wasm = &get_target_dir().join("mir2wasm");
+
         for_all_targets(&sysroot, |target| {
             let (mut pass, mut fail, mut ignored) = (0, 0, 0);
 
@@ -152,7 +163,7 @@ impl<'a> TestSuite<'a> {
 
                 let stderr = std::io::stderr();
                 write!(stderr.lock(), "test [{}] {} ... ", self.name, path.display()).unwrap();
-                let mut cmd = std::process::Command::new("target/debug/mir2wasm");
+                let mut cmd = std::process::Command::new(mir2wasm);
                 cmd.arg(&path);
                 cmd.arg("-Dwarnings");
                 if self.run {
