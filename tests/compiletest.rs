@@ -6,6 +6,7 @@ extern crate log;
 
 use std::fs;
 use std::fs::File;
+use std::io;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{PathBuf, Path};
 use std::str;
@@ -184,7 +185,7 @@ impl<'a> TestSuite<'a> {
                     cmd.arg("--run");
                 }
                 cmd.arg("-o");
-                cmd.arg(outwasm);
+                cmd.arg(&outwasm);
                 let libs = Path::new(&sysroot).join("lib");
                 let sysroot = libs.join("rustlib").join(&target).join("lib");
                 let paths = std::env::join_paths(&[libs, sysroot]).unwrap();
@@ -197,7 +198,15 @@ impl<'a> TestSuite<'a> {
                             match match_stdout(&output.stdout, &expected) {
                                 Ok(()) => {
                                     writeln!(stderr.lock(), "ok").unwrap();
-                                    pass += 1;
+                                    match run_in_vm(&outwasm) {
+                                        Ok(()) => pass += 1,
+                                        Err(_) => {
+                                            writeln!(stderr.lock(),
+                                                     "Test execution failed in JavaScript VM: {}",
+                                                     &path.display()).unwrap();
+                                            fail += 1;
+                                        }
+                                    }
                                 },
                                 Err(()) => {
                                     writeln!(stderr.lock(), "Test execution failed: {}",
@@ -233,6 +242,30 @@ impl<'a> TestSuite<'a> {
             }
         });
     }
+}
+
+#[cfg(target_os="linux")]
+fn run_in_vm(wasm: &Path) -> io::Result<()> {
+    let d8 = Path::new("./wasm-install/bin/d8");
+    let rt = Path::new("./rt/rustrt.js");
+
+    let mut cmd = std::process::Command::new(d8);
+    cmd.arg("--expose_wasm")
+        .arg(rt)
+        .arg("--")
+        .arg(wasm);
+
+    cmd.status().and_then(
+        |status| if status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::new(io::ErrorKind::Other, "execution failed"))
+        })
+}
+
+#[cfg(not(target_os="linux"))]
+fn run_in_vm(_wasm: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 #[test]
