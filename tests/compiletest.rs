@@ -4,6 +4,7 @@ extern crate compiletest_rs as compiletest;
 #[macro_use]
 extern crate log;
 
+use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{PathBuf, Path};
@@ -26,7 +27,7 @@ fn get_target_dir<'a>() -> &'a Path {
 /// Test source may include comments that indicate text that must
 /// occur in the output when it is run. This text must be prefixed by
 /// `//~`. For example:
-/// 
+///
 /// ```
 /// //~ (i32.const 6)
 /// wasm::print_i32(6)
@@ -38,12 +39,12 @@ fn get_expected_outputs(filename: &Path) -> Vec<String> {
     let mut outputs = Vec::new();
     let file = File::open(filename).expect("could not open file");
     let file = BufReader::new(file);
-    
+
     for line in file.lines() {
         let line = line.unwrap();
 
         let separator = "//~";
-        
+
         match line.find(separator) {
             Some(i) => {
                 let pattern = line[(i + separator.len())...line.len()-1].trim();
@@ -53,7 +54,7 @@ fn get_expected_outputs(filename: &Path) -> Vec<String> {
             None => continue
         }
     }
-    
+
     outputs
 }
 
@@ -84,7 +85,7 @@ fn match_stdout(stdout: &Vec<u8>, expected: &Vec<String>) -> Result<(), ()> {
             }
         }
     }
-    
+
     // If we made it to here, we found all the strings we were looking for.
     Ok(())
 }
@@ -145,6 +146,13 @@ impl<'a> TestSuite<'a> {
 
         let mir2wasm = &get_target_dir().join("mir2wasm");
 
+        let test_out = &get_target_dir().join("tests");
+        if !test_out.exists() {
+            fs::create_dir(test_out).expect("could not create test output directory");
+        } else {
+            assert!(test_out.is_dir());
+        }
+
         for_all_targets(&sysroot, |target| {
             let (mut pass, mut fail, mut ignored) = (0, 0, 0);
 
@@ -161,6 +169,12 @@ impl<'a> TestSuite<'a> {
                     continue;
                 }
 
+                let outwasm = get_target_dir().join("tests/test.wasm")
+                    .with_file_name(path.file_name().unwrap()).with_extension("wasm");
+                if outwasm.exists() {
+                    fs::remove_file(&outwasm).expect("could not delete previous test");
+                }
+
                 let stderr = std::io::stderr();
                 write!(stderr.lock(), "test [{}] {} ... ", self.name, path.display()).unwrap();
                 let mut cmd = std::process::Command::new(mir2wasm);
@@ -169,6 +183,8 @@ impl<'a> TestSuite<'a> {
                 if self.run {
                     cmd.arg("--run");
                 }
+                cmd.arg("-o");
+                cmd.arg(outwasm);
                 let libs = Path::new(&sysroot).join("lib");
                 let sysroot = libs.join("rustlib").join(&target).join("lib");
                 let paths = std::env::join_paths(&[libs, sysroot]).unwrap();
