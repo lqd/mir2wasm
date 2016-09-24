@@ -224,10 +224,10 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
         // Translate arg and ret tys to wasm
         let binaryen_args: Vec<_> = self.sig.inputs.iter().map(|t| rust_ty_to_binaryen(t)).collect();
         let mut needs_ret_var = false;
-        let t = self.sig.output;
-        let binaryen_ret = if !t.is_nil() {
+        let ret_ty = self.sig.output;
+        let binaryen_ret = if !ret_ty.is_nil() {
             needs_ret_var = true;
-            rust_ty_to_binaryen(t)
+            rust_ty_to_binaryen(ret_ty)
         } else {
             BinaryenNone()
         };
@@ -307,7 +307,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     }
 
                     debug!("emitting Return from fn {:?}", self.tcx.item_path_str(self.did));
-                    let expr = self.trans_operand(&Operand::Consume(Lvalue::ReturnPointer));
+                    let expr = if ret_ty.is_nil() {
+                        BinaryenExpressionRef(ptr::null_mut())
+                    } else {
+                        self.trans_operand(&Operand::Consume(Lvalue::ReturnPointer))
+                    };
                     let expr = unsafe { BinaryenReturn(self.module, expr) };
                     binaryen_stmts.push(expr);
                 }
@@ -1211,6 +1215,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
     fn generate_runtime_start(&mut self, entry_fn: &str) -> BinaryenFunctionRef {
         // runtime start fn
         let runtime_start_name = "__wasm_start";
+        let runtime_export_name = "rust_entry";
         let runtime_start_name = CString::new(runtime_start_name).expect("");
         let runtime_start_name_ptr = runtime_start_name.as_ptr();
         self.c_strings.push(runtime_start_name);
@@ -1266,6 +1271,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                      statements.as_ptr(),
                                      BinaryenIndex(statements.len() as _));
 
+            BinaryenAddExport(self.module,
+                              runtime_start_name_ptr,
+                              runtime_export_name.as_ptr() as *const i8);
             BinaryenAddFunction(self.module,
                                 runtime_start_name_ptr,
                                 runtime_start_ty,
