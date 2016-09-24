@@ -65,7 +65,7 @@ fn get_expected_outputs(filename: &Path) -> Vec<String> {
 /// This allows some flexibility. The test strings do not have to be
 /// consecutive, just in the right order. However, only one test
 /// string is allowed per line.
-fn match_stdout(stdout: &Vec<u8>, expected: &Vec<String>) -> Result<(), ()> {
+fn match_stdout(stdout: &Vec<u8>, expected: &[String]) -> Result<(), ()> {
     let mut stdout = str::from_utf8(stdout).unwrap().lines();
 
     for expect in expected {
@@ -118,6 +118,39 @@ fn should_ignore(filename: &Path) -> bool {
     return source.contains("xfail")
 }
 
+/// Runs a command and checks whether the expected output was produced.
+fn run_and_check_output(vm: &str, mut cmd: std::process::Command, expected: &[String]) -> bool {
+    let stderr = std::io::stderr();
+    match cmd.output() {
+        Ok(ref output) if output.status.success() => {
+            match match_stdout(&output.stdout, expected) {
+                Ok(()) => {
+                    writeln!(stderr.lock(), "[{}] ok", vm).unwrap();
+                    return true;
+                },
+                Err(()) => {
+                    writeln!(stderr.lock(), "[{}] Test execution failed", vm).unwrap();
+                    return false;
+                }
+            }
+        }
+        Ok(output) => {
+            writeln!(stderr.lock(), "[{}] FAILED with exit code {:?}",
+                     vm,
+                     output.status.code()).unwrap();
+            writeln!(stderr.lock(), "stdout: \n {}",
+                     std::str::from_utf8(&output.stdout).unwrap()).unwrap();
+            writeln!(stderr.lock(), "stderr: \n {}",
+                     std::str::from_utf8(&output.stderr).unwrap()).unwrap();
+            return false;
+        }
+        Err(e) => {
+            writeln!(stderr.lock(), "[{}] FAILED: {}", vm, e).unwrap();
+            return false;
+        },
+    }
+}
+
 struct TestSuite<'a> {
     name: &'a str,
     run: bool,
@@ -147,7 +180,7 @@ impl<'a> TestSuite<'a> {
 
         let mir2wasm = &get_target_dir().join("mir2wasm");
 
-        let test_out = &get_target_dir().join("tests");
+        let test_out = &get_target_dir().join("tests").join(self.name);
         if !test_out.exists() {
             fs::create_dir(test_out).expect("could not create test output directory");
         } else {
@@ -170,7 +203,7 @@ impl<'a> TestSuite<'a> {
                     continue;
                 }
 
-                let outwasm = get_target_dir().join("tests/test.wasm")
+                let outwasm = test_out.join("test.wasm")
                     .with_file_name(path.file_name().unwrap()).with_extension("wasm");
                 if outwasm.exists() {
                     fs::remove_file(&outwasm).expect("could not delete previous test");
@@ -191,47 +224,16 @@ impl<'a> TestSuite<'a> {
                 let paths = std::env::join_paths(&[libs, sysroot]).unwrap();
                 cmd.env(compiletest::procsrv::dylib_env_var(), paths);
 
-                match cmd.output() {
-                    Ok(ref output) if output.status.success() => {
-                        if self.run {
-                            let expected = get_expected_outputs(&path);
-                            match match_stdout(&output.stdout, &expected) {
-                                Ok(()) => {
-                                    writeln!(stderr.lock(), "ok").unwrap();
-                                    match run_in_vm(&outwasm) {
-                                        Ok(()) => pass += 1,
-                                        Err(_) => {
-                                            writeln!(stderr.lock(),
-                                                     "Test execution failed in JavaScript VM: {}",
-                                                     &path.display()).unwrap();
-                                            fail += 1;
-                                        }
-                                    }
-                                },
-                                Err(()) => {
-                                    writeln!(stderr.lock(), "Test execution failed: {}",
-                                             &path.display()).unwrap();
-                                    fail += 1;
-                                }
-                            }
-                        } else {
-                            writeln!(stderr.lock(), "ok").unwrap();
-                            pass += 1;
-                        }
-                    }
-                    Ok(output) => {
-                        writeln!(stderr.lock(), "FAILED with exit code {:?}",
-                                 output.status.code()).unwrap();
-                        writeln!(stderr.lock(), "stdout: \n {}",
-                                 std::str::from_utf8(&output.stdout).unwrap()).unwrap();
-                        writeln!(stderr.lock(), "stderr: \n {}",
-                                 std::str::from_utf8(&output.stderr).unwrap()).unwrap();
+                let expected = get_expected_outputs(&path);
+
+                if run_and_check_output("binaryen", cmd, expected.as_slice()) {
+                    if run_in_vm(&outwasm, expected.as_slice()) {
+                        pass += 1;
+                    } else {
                         fail += 1;
                     }
-                    Err(e) => {
-                        writeln!(stderr.lock(), "FAILED: {}", e).unwrap();
-                        fail += 1;
-                    },
+                } else {
+                    fail += 1;
                 }
             }
             let stderr = std::io::stderr();
@@ -245,7 +247,7 @@ impl<'a> TestSuite<'a> {
 }
 
 #[cfg(target_os="linux")]
-fn run_in_vm(wasm: &Path) -> io::Result<()> {
+fn run_in_vm(wasm: &Path, expected: &[String]) -> bool {
     let d8 = Path::new("./wasm-install/bin/d8");
     let rt = Path::new("./rt/rustrt.js");
 
@@ -255,17 +257,12 @@ fn run_in_vm(wasm: &Path) -> io::Result<()> {
         .arg("--")
         .arg(wasm);
 
-    cmd.status().and_then(
-        |status| if status.success() {
-            Ok(())
-        } else {
-            Err(io::Error::new(io::ErrorKind::Other, "execution failed"))
-        })
+    run_and_check_output("V8", cmd, expected)
 }
 
 #[cfg(not(target_os="linux"))]
-fn run_in_vm(_wasm: &Path) -> io::Result<()> {
-    Ok(())
+fn run_in_vm(_wasm: &Path, _expected: &Vec<String>) -> bool {
+    true
 }
 
 #[test]

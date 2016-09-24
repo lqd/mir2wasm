@@ -10,7 +10,10 @@ let module_handler = {
     get: function(target, module_name) {
         if(module_name == "spectest") {
             return {
-                print: print
+                print: function(i) {
+                    // TODO: support more data types
+                    print("(i32.const " + i + ")")
+                }
             };
         }
         return new Proxy({}, {
