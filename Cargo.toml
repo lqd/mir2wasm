@@ -22,7 +22,7 @@ env_logger = "0.3.3"
 libc = "0.2"
 
 [dev-dependencies]
-compiletest_rs = "0.2.1"
+compiletest_rs = "0.2.3"
 
 [build-dependencies]
 cmake = "0.1.17"
