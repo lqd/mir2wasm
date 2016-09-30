@@ -219,7 +219,7 @@ extern {
 
     pub fn BinaryenBlock(module: BinaryenModuleRef, name: *const c_char, children: *const BinaryenExpressionRef, numChildren: BinaryenIndex) -> BinaryenExpressionRef;
     pub fn BinaryenIf(module: BinaryenModuleRef, condition: BinaryenExpressionRef, ifTrue: BinaryenExpressionRef, ifFalse: BinaryenExpressionRef) -> BinaryenExpressionRef;
-    pub fn BinaryenLoop(module: BinaryenModuleRef, out: *const c_char, in_: *const c_char, body: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenLoop(module: BinaryenModuleRef, in_: *const c_char, body: BinaryenExpressionRef) -> BinaryenExpressionRef;
     pub fn BinaryenBreak(module: BinaryenModuleRef, name: *const c_char, condition: BinaryenExpressionRef, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
     pub fn BinaryenSwitch(module: BinaryenModuleRef, names: *const *const c_char, numNames: BinaryenIndex, defaultName: *const c_char, condition: BinaryenExpressionRef, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
     pub fn BinaryenCall(module: BinaryenModuleRef, target: *const c_char, operands: *const BinaryenExpressionRef, numOperands: BinaryenIndex, returnType: BinaryenType) -> BinaryenExpressionRef;
@@ -227,12 +227,14 @@ extern {
     pub fn BinaryenCallIndirect(module: BinaryenModuleRef, target: BinaryenExpressionRef, operands: *const BinaryenExpressionRef, numOperands: BinaryenIndex, type_: BinaryenFunctionTypeRef) -> BinaryenExpressionRef;
     pub fn BinaryenGetLocal(module: BinaryenModuleRef, index: BinaryenIndex, type_: BinaryenType) -> BinaryenExpressionRef;
     pub fn BinaryenSetLocal(module: BinaryenModuleRef, index: BinaryenIndex, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenTeeLocal(module: BinaryenModuleRef, index: BinaryenIndex, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
     pub fn BinaryenLoad(module: BinaryenModuleRef, bytes: u32, signed_: u8, offset: u32, align: u32, type_: BinaryenType, ptr: BinaryenExpressionRef) -> BinaryenExpressionRef;
-    pub fn BinaryenStore(module: BinaryenModuleRef, bytes: u32, offset: u32, align: u32, ptr: BinaryenExpressionRef, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenStore(module: BinaryenModuleRef, bytes: u32, offset: u32, align: u32, ptr: BinaryenExpressionRef, value: BinaryenExpressionRef, _type: BinaryenType) -> BinaryenExpressionRef;
     pub fn BinaryenConst(module: BinaryenModuleRef, value: BinaryenLiteral) -> BinaryenExpressionRef;
     pub fn BinaryenUnary(module: BinaryenModuleRef, op: BinaryenOp, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
     pub fn BinaryenBinary(module: BinaryenModuleRef, op: BinaryenOp, left: BinaryenExpressionRef, right: BinaryenExpressionRef) -> BinaryenExpressionRef;
     pub fn BinaryenSelect(module: BinaryenModuleRef, condition: BinaryenExpressionRef, ifTrue: BinaryenExpressionRef, ifFalse: BinaryenExpressionRef) -> BinaryenExpressionRef;
+    pub fn BinaryenDrop(module: BinaryenModuleRef, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
     pub fn BinaryenReturn(module: BinaryenModuleRef, value: BinaryenExpressionRef) -> BinaryenExpressionRef;
     pub fn BinaryenHost(module: BinaryenModuleRef, op: BinaryenOp, name: *const c_char, operands: *const BinaryenExpressionRef, numOperands: BinaryenIndex) -> BinaryenExpressionRef;
     pub fn BinaryenNop(module: BinaryenModuleRef) -> BinaryenExpressionRef;
@@ -257,7 +259,7 @@ extern {
 
     // Memory
 
-    pub fn BinaryenSetMemory(module: BinaryenModuleRef, initial: BinaryenIndex, maximum: BinaryenIndex, exportName: *const c_char, segments: *const *const c_char, segmentOffsets: *const BinaryenIndex, segmentSizes: *const BinaryenIndex, numSegments: BinaryenIndex);
+    pub fn BinaryenSetMemory(module: BinaryenModuleRef, initial: BinaryenIndex, maximum: BinaryenIndex, exportName: *const c_char, segments: *const *const c_char, segmentOffsets: *const BinaryenExpressionRef, segmentSizes: *const BinaryenIndex, numSegments: BinaryenIndex);
 
     // Start function
 
@@ -276,6 +278,8 @@ extern {
     pub fn BinaryenModuleRead(input: *const c_char, inputSize: size_t) -> BinaryenModuleRef;
 
     pub fn BinaryenModuleInterpret(module: BinaryenModuleRef);
+
+    pub fn BinaryenModuleAutoDrop(module: BinaryenModuleRef);
 
     // CFG / Relooper
 
