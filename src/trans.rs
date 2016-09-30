@@ -65,6 +65,8 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
         c_strings: Vec::new(),
     };
 
+    unsafe { BinaryenModuleAutoDrop(v.module); }
+
     if options.trace {
         unsafe { BinaryenSetAPITracing(true) }
     }
@@ -302,7 +304,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     unsafe {
                         debug!("emitting function epilogue, GetLocal({}) + Store", stack_pointer_local.0);
                         let read_original_sp = BinaryenGetLocal(self.module, stack_pointer_local, BinaryenInt32());
-                        let restore_original_sp = BinaryenStore(self.module, 4, 0, 0, self.emit_sp(), read_original_sp);
+                        let restore_original_sp = BinaryenStore(self.module, 4, 0, 0, self.emit_sp(), read_original_sp, BinaryenInt32());
                         binaryen_stmts.push(restore_original_sp);
                     }
 
@@ -429,7 +431,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
                                                 debug!("tmp - emitting Store copy, size: {}, offset: {}", size, offset);
                                                 let read_bytes = BinaryenLoad(self.module, size, 0, offset, 0, ty, ptr);
-                                                let copy_bytes = BinaryenStore(self.module, size, offset, 0, sp, read_bytes);
+                                                let copy_bytes = BinaryenStore(self.module, size, offset, 0, sp, read_bytes, BinaryenInt64());
                                                 binaryen_stmts.push(copy_bytes);
 
                                                 bytes_to_copy -= size as i32 * 8;
@@ -653,14 +655,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             debug!("emitting Store + GetLocal({}) for Assign Use '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                             let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
                             // TODO: match on the dest_ty to know how many bytes to write, not just i32s
-                            BinaryenStore(self.module, 4, offset, 0, ptr, src)
+                            BinaryenStore(self.module, 4, offset, 0, ptr, src, BinaryenInt32())
                         }
                         None => {
-                            debug!("emitting SetLocal({}) for Assign Use '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
-                            BinaryenSetLocal(self.module, dest.index, src)
+                            debug!("emitting TeeLocal({}) for Assign Use '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
+                            BinaryenTeeLocal(self.module, dest.index, src)
                         }
                     };
-                    statements.push(statement);
+                    statements.push(BinaryenDrop(self.module, statement));
                 }
             }
 
@@ -673,7 +675,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     };
                     let op = BinaryenUnary(self.module, op, operand);
                     let statement = BinaryenSetLocal(self.module, dest.index, op);
-                    statements.push(statement);
+                    statements.push(BinaryenDrop(self.module, statement));
                 }
             }
 
@@ -708,14 +710,14 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             debug!("emitting Store + GetLocal({}) for Assign BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                             let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
                             // TODO: match on the dest_ty to know how many bytes to write, not just i32s
-                            BinaryenStore(self.module, 4, offset, 0, ptr, op)
+                            BinaryenStore(self.module, 4, offset, 0, ptr, op, BinaryenInt32())
                         }
                         None => {
-                            debug!("emitting SetLocal({}) for Assign BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
-                            BinaryenSetLocal(self.module, dest.index, op)
+                            debug!("emitting TeeLocal({}) for Assign BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
+                            BinaryenTeeLocal(self.module, dest.index, op)
                         }
                     };
-                    statements.push(statement);
+                    statements.push(BinaryenDrop(self.module, statement));
                 }
             }
 
@@ -759,8 +761,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             debug!("emitting Store + GetLocal({}) for Assign Checked BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
                             let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
                             // TODO: match on the dest_ty to know how many bytes to write, not just i32s
-                            statements.push(BinaryenStore(self.module, 4, offset, 0, ptr, lower));
-                            statements.push(BinaryenStore(self.module, 4, offset + 4, 0, ptr, upper));
+                            statements.push(BinaryenStore(self.module, 4, offset, 0, ptr, lower, BinaryenInt32()));
+                            statements.push(BinaryenStore(self.module, 4, offset + 4, 0, ptr, upper, BinaryenInt32()));
                         }
                         None => {
                             let dest_size = self.type_size(dest_ty) as i32 * 8;
@@ -770,8 +772,8 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             statements.push(allocation);
                             let ptr = BinaryenGetLocal(self.module, dest.index, rust_ty_to_binaryen(dest_ty));
 
-                            statements.push(BinaryenStore(self.module, 4, 0, 0, ptr, lower));
-                            statements.push(BinaryenStore(self.module, 4, 4, 0, ptr, upper));
+                            statements.push(BinaryenStore(self.module, 4, 0, 0, ptr, lower, BinaryenInt32()));
+                            statements.push(BinaryenStore(self.module, 4, 4, 0, ptr, upper, BinaryenInt32()));
                         }
                     }
                 }
@@ -821,7 +823,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                                     unsafe {
                                         debug!("emitting Store for Enum '{:?}' discr: {:?}", adt_def, discr_val);
                                         let discr_val = BinaryenConst(self.module, BinaryenLiteralInt32(discr_val as i32));
-                                        let write_discr = BinaryenStore(self.module, discr_size, 0, 0, self.emit_read_sp(), discr_val);
+                                        let write_discr = BinaryenStore(self.module, discr_size, 0, 0, self.emit_read_sp(), discr_val, BinaryenInt32());
                                         statements.push(write_discr);
                                     }
 
@@ -934,9 +936,9 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
 
             let dest_size = BinaryenConst(self.module, BinaryenLiteralInt32(dest_size));
             let decr_sp = BinaryenBinary(self.module, BinaryenSubInt32(), read_sp, dest_size);
-            let write_sp = BinaryenStore(self.module, 4, 0, 0, sp, decr_sp);
-            let write_local = BinaryenSetLocal(self.module, dest, write_sp);
-            write_local
+            let write_local = BinaryenTeeLocal(self.module, dest, decr_sp);
+            let write_sp = BinaryenStore(self.module, 4, 0, 0, sp, write_local, BinaryenInt32());
+            write_sp
         }
     }
 
@@ -964,7 +966,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                 // let operand_ty = self.mir.operand_ty(*self.tcx, operand);
                 // TODO: match on the operand_ty to know how many bytes to store, not just i32s
                 let src = self.trans_operand(operand);
-                let write_field = BinaryenStore(self.module, 4, offset as u32, 0, read_sp, src);
+                let write_field = BinaryenStore(self.module, 4, offset as u32, 0, read_sp, src, BinaryenInt32());
                 statements.push(write_field);
             }
         }
@@ -1240,7 +1242,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                               BinaryenIndex(0));
 
             let stack_top = BinaryenConst(self.module, BinaryenLiteralInt32(0xFFFF));
-            let stack_init = BinaryenStore(self.module, 4, 0, 0, self.emit_sp(), stack_top);
+            let stack_init = BinaryenStore(self.module, 4, 0, 0, self.emit_sp(), stack_top, BinaryenInt32());
             statements.push(stack_init);
 
             // call start_fn(0, 0) or main()
@@ -1250,18 +1252,20 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     BinaryenConst(self.module, BinaryenLiteralInt32(0)),
                     BinaryenConst(self.module, BinaryenLiteralInt32(0))
                 ];
-                entry_fn_call = BinaryenCall(self.module,
+                let call = BinaryenCall(self.module,
                                              entry_fn_name.as_ptr(),
                                              start_args.as_ptr(),
                                              BinaryenIndex(start_args.len() as _),
                                              BinaryenInt32());
+                entry_fn_call = BinaryenDrop(self.module, call);
             } else {
                 assert!(entry_fn == "main");
-                entry_fn_call = BinaryenCall(self.module,
+                let call = BinaryenCall(self.module,
                                              entry_fn_name.as_ptr(),
                                              ptr::null(),
                                              BinaryenIndex(0),
                                              BinaryenNone());
+                entry_fn_call = BinaryenDrop(self.module, call);
             }
 
             statements.push(entry_fn_call);

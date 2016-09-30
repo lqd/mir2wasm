@@ -3,7 +3,7 @@ name = "mir2wasm"
 version = "0.1.0"
 dependencies = [
  "cmake 0.1.17 (registry+https://github.com/rust-lang/crates.io-index)",
- "compiletest_rs 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "compiletest_rs 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "error-chain 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "compiletest_rs"
-version = "0.2.1"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -180,7 +180,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum backtrace-sys 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)" = "ff73785ae8e06bb4a7b09e09f06d7434f9748b86d2f67bdf334b603354497e08"
 "checksum cfg-if 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)" = "de1e760d7b6535af4241fca8bd8adf68e2e7edacc6b29f5d399050c5e48cf88c"
 "checksum cmake 0.1.17 (registry+https://github.com/rust-lang/crates.io-index)" = "dfcf5bcece56ef953b8ea042509e9dcbdfe97820b7e20d86beb53df30ed94978"
-"checksum compiletest_rs 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "0bcddebf582c5c035cce855a89596eb686cc40b9e77da1026fba735dcca2fbd3"
+"checksum compiletest_rs 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "0ac936b073036755b7d176f16d4c660f4d6f1390cbe556316af9cb9724117059"
 "checksum dbghelp-sys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "97590ba53bcb8ac28279161ca943a924d1fd4a8fb3fa63302591647c4fc5b850"
 "checksum env_logger 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "aba65b63ffcc17ffacd6cf5aa843da7c5a25e3bd4bbe0b7def8b214e411250e5"
 "checksum error-chain 0.1.9 (registry+https://github.com/rust-lang/crates.io-index)" = "369f451d4d6487dff893b48ae01fe02d9b6b4d1694d6f2d331463d49e09c5149"
