@@ -6,7 +6,6 @@ extern crate log;
 
 use std::fs;
 use std::fs::File;
-use std::io;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{PathBuf, Path};
 use std::str;
@@ -181,8 +180,16 @@ impl<'a> TestSuite<'a> {
         let mir2wasm = &get_target_dir().join("mir2wasm");
 
         let test_out = &get_target_dir().join("tests").join(self.name);
+        if !test_out.parent().unwrap().exists() {
+            fs::create_dir(test_out.parent().unwrap())
+                .expect(format!("could not create test output directory, {}",
+                                test_out.parent().unwrap().display()).as_str());
+        } else {
+            assert!(test_out.parent().unwrap().is_dir());
+        }
         if !test_out.exists() {
-            fs::create_dir(test_out).expect("could not create test output directory");
+            fs::create_dir(test_out).expect(format!("could not create test output directory, {}",
+                                                    test_out.display()).as_str());
         } else {
             assert!(test_out.is_dir());
         }
@@ -261,7 +268,7 @@ fn run_in_vm(wasm: &Path, expected: &[String]) -> bool {
 }
 
 #[cfg(not(target_os="linux"))]
-fn run_in_vm(_wasm: &Path, _expected: &Vec<String>) -> bool {
+fn run_in_vm(_wasm: &Path, _expected: &[String]) -> bool {
     true
 }
 
