@@ -48,7 +48,7 @@ pub mod clone {
 
     pub struct AssertParamIsClone<T: Clone + ?Sized> { _field: ::marker::PhantomData<T> }
 
-    // should this #[derive] requirement exists and have to be translated in our case ?
+    // should this #[derive] requirement exist and have to be translated in our case ?
     pub fn assert_receiver_is_clone<T: Clone + ?Sized>(_: &T) {}
 
     macro_rules! clone_impl {
