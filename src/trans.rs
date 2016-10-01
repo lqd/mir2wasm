@@ -163,7 +163,7 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
         let generics = &type_scheme.generics;
 
         // don't translate generic functions yet
-        if generics.has_self || !generics.types.is_empty() {
+        if generics.types.len() + generics.parent_types as usize > 0 {
             return;
         }
 
