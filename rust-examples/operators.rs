@@ -131,7 +131,9 @@ fn main() {
     i *= 4;
     i /= 6;
     i -= 1;
-    let j = i == 1;
+
+    let _j = i == 1;
+    // TODO: assert j is true
 
     let result = test(i);
     wasm::print_i32(result); // (i32.const 2)

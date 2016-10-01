@@ -160,9 +160,10 @@ impl<'v, 'tcx> Visitor<'v> for BinaryenModuleCtxt<'v, 'tcx> {
                 b: &'v Block, s: Span, id: NodeId) {
         let did = self.tcx.map.local_def_id(id);
         let type_scheme = self.tcx.lookup_item_type(did);
+        let generics = &type_scheme.generics;
 
         // don't translate generic functions yet
-        if !type_scheme.generics.types.is_empty() {
+        if generics.has_self || !generics.types.is_empty() {
             return;
         }
 
