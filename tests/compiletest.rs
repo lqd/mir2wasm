@@ -4,12 +4,22 @@ extern crate compiletest_rs as compiletest;
 #[macro_use]
 extern crate log;
 
+use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{PathBuf, Path};
 use std::str;
 use std::str::FromStr;
 
+/// Returns the target directory, where we can find build artifacts
+/// and such for the current configuration.
+fn get_target_dir<'a>() -> &'a Path {
+    // OUT_DIR is set by cargo.
+    Path::new(env!("OUT_DIR"))
+        .parent().unwrap()
+        .parent().unwrap()
+        .parent().unwrap()
+}
 
 /// Gets a vector of strings that are expected to be in the output of
 /// this test.
@@ -17,7 +27,7 @@ use std::str::FromStr;
 /// Test source may include comments that indicate text that must
 /// occur in the output when it is run. This text must be prefixed by
 /// `//~`. For example:
-/// 
+///
 /// ```
 /// //~ (i32.const 6)
 /// wasm::print_i32(6)
@@ -29,12 +39,12 @@ fn get_expected_outputs(filename: &Path) -> Vec<String> {
     let mut outputs = Vec::new();
     let file = File::open(filename).expect("could not open file");
     let file = BufReader::new(file);
-    
+
     for line in file.lines() {
         let line = line.unwrap();
 
         let separator = "//~";
-        
+
         match line.find(separator) {
             Some(i) => {
                 let pattern = line[(i + separator.len())...line.len()-1].trim();
@@ -44,7 +54,7 @@ fn get_expected_outputs(filename: &Path) -> Vec<String> {
             None => continue
         }
     }
-    
+
     outputs
 }
 
@@ -54,7 +64,7 @@ fn get_expected_outputs(filename: &Path) -> Vec<String> {
 /// This allows some flexibility. The test strings do not have to be
 /// consecutive, just in the right order. However, only one test
 /// string is allowed per line.
-fn match_stdout(stdout: &Vec<u8>, expected: &Vec<String>) -> Result<(), ()> {
+fn match_stdout(stdout: &Vec<u8>, expected: &[String]) -> Result<(), ()> {
     let mut stdout = str::from_utf8(stdout).unwrap().lines();
 
     for expect in expected {
@@ -75,7 +85,7 @@ fn match_stdout(stdout: &Vec<u8>, expected: &Vec<String>) -> Result<(), ()> {
             }
         }
     }
-    
+
     // If we made it to here, we found all the strings we were looking for.
     Ok(())
 }
@@ -90,7 +100,7 @@ fn compile_fail() {
         config.mode = "compile-fail".parse().expect("Invalid mode");
         config.run_lib_path =
             Path::new(sysroot).join("lib").join("rustlib").join(&target).join("lib");
-        config.rustc_path = "target/debug/mir2wasm".into();
+        config.rustc_path = get_target_dir().join("mir2wasm");
         config.src_base = PathBuf::from("tests/compile-fail".to_string());
         config.target = target.to_owned();
         config.target_rustcflags = Some(flags.clone());
@@ -105,6 +115,39 @@ fn should_ignore(filename: &Path) -> bool {
     file.read_to_string(&mut source).expect("could not read file");
 
     return source.contains("xfail")
+}
+
+/// Runs a command and checks whether the expected output was produced.
+fn run_and_check_output(vm: &str, mut cmd: std::process::Command, expected: &[String]) -> bool {
+    let stderr = std::io::stderr();
+    match cmd.output() {
+        Ok(ref output) if output.status.success() => {
+            match match_stdout(&output.stdout, expected) {
+                Ok(()) => {
+                    writeln!(stderr.lock(), "[{}] ok", vm).unwrap();
+                    return true;
+                },
+                Err(()) => {
+                    writeln!(stderr.lock(), "[{}] Test execution failed", vm).unwrap();
+                    return false;
+                }
+            }
+        }
+        Ok(output) => {
+            writeln!(stderr.lock(), "[{}] FAILED with exit code {:?}",
+                     vm,
+                     output.status.code()).unwrap();
+            writeln!(stderr.lock(), "stdout: \n {}",
+                     std::str::from_utf8(&output.stdout).unwrap()).unwrap();
+            writeln!(stderr.lock(), "stderr: \n {}",
+                     std::str::from_utf8(&output.stderr).unwrap()).unwrap();
+            return false;
+        }
+        Err(e) => {
+            writeln!(stderr.lock(), "[{}] FAILED: {}", vm, e).unwrap();
+            return false;
+        },
+    }
 }
 
 struct TestSuite<'a> {
@@ -134,6 +177,23 @@ impl<'a> TestSuite<'a> {
         let sysroot = find_sysroot();
         let path = &self.path;
 
+        let mir2wasm = &get_target_dir().join("mir2wasm");
+
+        let test_out = &get_target_dir().join("tests").join(self.name);
+        if !test_out.parent().unwrap().exists() {
+            fs::create_dir(test_out.parent().unwrap())
+                .expect(format!("could not create test output directory, {}",
+                                test_out.parent().unwrap().display()).as_str());
+        } else {
+            assert!(test_out.parent().unwrap().is_dir());
+        }
+        if !test_out.exists() {
+            fs::create_dir(test_out).expect(format!("could not create test output directory, {}",
+                                                    test_out.display()).as_str());
+        } else {
+            assert!(test_out.is_dir());
+        }
+
         for_all_targets(&sysroot, |target| {
             let (mut pass, mut fail, mut ignored) = (0, 0, 0);
 
@@ -150,52 +210,37 @@ impl<'a> TestSuite<'a> {
                     continue;
                 }
 
+                let outwasm = test_out.join("test.wasm")
+                    .with_file_name(path.file_name().unwrap()).with_extension("wasm");
+                if outwasm.exists() {
+                    fs::remove_file(&outwasm).expect("could not delete previous test");
+                }
+
                 let stderr = std::io::stderr();
                 write!(stderr.lock(), "test [{}] {} ... ", self.name, path.display()).unwrap();
-                let mut cmd = std::process::Command::new("target/debug/mir2wasm");
+                let mut cmd = std::process::Command::new(mir2wasm);
                 cmd.arg(&path);
                 cmd.arg("-Dwarnings");
                 if self.run {
                     cmd.arg("--run");
                 }
+                cmd.arg("-o");
+                cmd.arg(&outwasm);
                 let libs = Path::new(&sysroot).join("lib");
                 let sysroot = libs.join("rustlib").join(&target).join("lib");
                 let paths = std::env::join_paths(&[libs, sysroot]).unwrap();
                 cmd.env(compiletest::procsrv::dylib_env_var(), paths);
 
-                match cmd.output() {
-                    Ok(ref output) if output.status.success() => {
-                        if self.run {
-                            let expected = get_expected_outputs(&path);
-                            match match_stdout(&output.stdout, &expected) {
-                                Ok(()) => {
-                                    writeln!(stderr.lock(), "ok").unwrap();
-                                    pass += 1;
-                                },
-                                Err(()) => {
-                                    writeln!(stderr.lock(), "Test execution failed: {}",
-                                             &path.display()).unwrap();
-                                    fail += 1;
-                                }
-                            }
-                        } else {
-                            writeln!(stderr.lock(), "ok").unwrap();
-                            pass += 1;
-                        }
-                    }
-                    Ok(output) => {
-                        writeln!(stderr.lock(), "FAILED with exit code {:?}",
-                                 output.status.code()).unwrap();
-                        writeln!(stderr.lock(), "stdout: \n {}",
-                                 std::str::from_utf8(&output.stdout).unwrap()).unwrap();
-                        writeln!(stderr.lock(), "stderr: \n {}",
-                                 std::str::from_utf8(&output.stderr).unwrap()).unwrap();
+                let expected = get_expected_outputs(&path);
+
+                if run_and_check_output("binaryen", cmd, expected.as_slice()) {
+                    if run_in_vm(&outwasm, expected.as_slice()) {
+                        pass += 1;
+                    } else {
                         fail += 1;
                     }
-                    Err(e) => {
-                        writeln!(stderr.lock(), "FAILED: {}", e).unwrap();
-                        fail += 1;
-                    },
+                } else {
+                    fail += 1;
                 }
             }
             let stderr = std::io::stderr();
@@ -206,6 +251,25 @@ impl<'a> TestSuite<'a> {
             }
         });
     }
+}
+
+#[cfg(target_os="linux")]
+fn run_in_vm(wasm: &Path, expected: &[String]) -> bool {
+    let d8 = Path::new("./wasm-install/bin/d8");
+    let rt = Path::new("./rt/rustrt.js");
+
+    let mut cmd = std::process::Command::new(d8);
+    cmd.arg("--expose_wasm")
+        .arg(rt)
+        .arg("--")
+        .arg(wasm);
+
+    run_and_check_output("V8", cmd, expected)
+}
+
+#[cfg(not(target_os="linux"))]
+fn run_in_vm(_wasm: &Path, _expected: &[String]) -> bool {
+    true
 }
 
 #[test]
