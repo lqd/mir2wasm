@@ -55,6 +55,10 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
     let _ignore = tcx.dep_graph.in_ignore();
 
+    if options.trace {
+        unsafe { BinaryenSetAPITracing(true) }
+    }
+
     let ref mut v = BinaryenModuleCtxt {
         tcx: tcx,
         mir_map: mir_map,
@@ -67,10 +71,6 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
 
     unsafe { BinaryenModuleAutoDrop(v.module); }
 
-    if options.trace {
-        unsafe { BinaryenSetAPITracing(true) }
-    }
-
     // TODO: allow for a configurable (or auto-detected) memory size
     let mem_size = BinaryenIndex(256);
     unsafe {
@@ -81,14 +81,14 @@ pub fn trans_crate<'a, 'tcx>(tcx: &TyCtxt<'a, 'tcx, 'tcx>,
     tcx.map.krate().visit_all_items(v);
 
     unsafe {
+        assert!(BinaryenModuleValidate(v.module) == 1,
+                "Internal compiler error: invalid generated module");
+
         // TODO: check which of the Binaryen optimization passes we want aren't on by default here.
         //       eg, removing unused functions and imports, minification, etc
         if options.optimize {
             BinaryenModuleOptimize(v.module);
         }
-
-        assert!(BinaryenModuleValidate(v.module) == 1,
-                "Internal compiler error: invalid generated module");
 
         if options.trace {
             BinaryenSetAPITracing(false);
@@ -659,11 +659,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             BinaryenStore(self.module, 4, offset, 0, ptr, src, BinaryenInt32())
                         }
                         None => {
-                            debug!("emitting TeeLocal({}) for Assign Use '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
-                            BinaryenTeeLocal(self.module, dest.index, src)
+                            debug!("emitting SetLocal({}) for Assign Use '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
+                            BinaryenSetLocal(self.module, dest.index, src)
                         }
                     };
-                    statements.push(BinaryenDrop(self.module, statement));
+                    statements.push(statement);
                 }
             }
 
@@ -676,7 +676,7 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     };
                     let op = BinaryenUnary(self.module, op, operand);
                     let statement = BinaryenSetLocal(self.module, dest.index, op);
-                    statements.push(BinaryenDrop(self.module, statement));
+                    statements.push(statement);
                 }
             }
 
@@ -714,11 +714,11 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                             BinaryenStore(self.module, 4, offset, 0, ptr, op, BinaryenInt32())
                         }
                         None => {
-                            debug!("emitting TeeLocal({}) for Assign BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
-                            BinaryenTeeLocal(self.module, dest.index, op)
+                            debug!("emitting SetLocal({}) for Assign BinaryOp '{:?} = {:?}'", dest.index.0, lvalue, rvalue);
+                            BinaryenSetLocal(self.module, dest.index, op)
                         }
                     };
-                    statements.push(BinaryenDrop(self.module, statement));
+                    statements.push(statement);
                 }
             }
 
@@ -1254,19 +1254,19 @@ impl<'v, 'tcx: 'v> BinaryenFnCtxt<'v, 'tcx> {
                     BinaryenConst(self.module, BinaryenLiteralInt32(0))
                 ];
                 let call = BinaryenCall(self.module,
-                                             entry_fn_name.as_ptr(),
-                                             start_args.as_ptr(),
-                                             BinaryenIndex(start_args.len() as _),
-                                             BinaryenInt32());
+                                        entry_fn_name.as_ptr(),
+                                        start_args.as_ptr(),
+                                        BinaryenIndex(start_args.len() as _),
+                                        BinaryenInt32());
                 entry_fn_call = BinaryenDrop(self.module, call);
             } else {
                 assert!(entry_fn == "main");
-                let call = BinaryenCall(self.module,
+                assert!(self.sig.output.is_nil());
+                entry_fn_call = BinaryenCall(self.module,
                                              entry_fn_name.as_ptr(),
                                              ptr::null(),
                                              BinaryenIndex(0),
                                              BinaryenNone());
-                entry_fn_call = BinaryenDrop(self.module, call);
             }
 
             statements.push(entry_fn_call);
